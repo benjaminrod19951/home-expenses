@@ -1,42 +1,13 @@
-# הוצאות הבית — V4
+[README.md](https://github.com/user-attachments/files/30881245/README.md)
+# Home Expenses Manager V7
 
-כולל:
-- חשבון בית משותף לשני משתמשים.
-- ייבוא XLSX של פירוט אשראי.
-- ייבוא PDF של עו״ש.
-- סינון חיובי אשראי מהעו״ש כדי שלא ייספרו כהוצאה שנייה.
-- הוצאה ידנית כולל מזומן.
-- קטגוריות מוכנות + קטגוריות אישיות.
-- השוואת חודשים.
-- סיכום סופר, מזומן, אשראי ועו״ש.
-- PWA בסיסי להוספה למסך הבית.
+This version adds:
+- Full scrollable expense table for the selected month (no 20-row cutoff).
+- Edit existing transactions, including category, merchant, amount, date, payment method and card last four digits.
+- Click any category to open a detailed list of its transactions.
+- Click comparison cells to drill into that category/month.
+- Dedicated multi-month comparison view with categories as rows and months as columns.
+- Display of the last four digits of the credit card on imported transactions and in details.
+- Manual expenses can also store the last four card digits.
 
-## התקנה מקומית
-
-1. צור פרויקט Supabase.
-2. הרץ את `supabase/schema.sql` ב-SQL Editor.
-3. צור `.env.local`:
-   VITE_SUPABASE_URL=...
-   VITE_SUPABASE_PUBLISHABLE_KEY=...
-4. הרץ:
-   npm install
-   npm run dev
-
-## פריסה
-
-אפשר לפרוס את הפרויקט ב-Vercel. לאחר הפריסה מגדירים שם את שני משתני הסביבה של Supabase.
-בטלפון פותחים את כתובת האתר ובוחרים Add to Home Screen.
-
-## שימוש זוגי
-
-המשתמש הראשון:
-- נרשם.
-- בוחר "צור בית חדש".
-- מקבל קוד בית.
-
-המשתמש השני:
-- נרשם עם החשבון שלו.
-- בוחר "הצטרף לבית קיים".
-- מזין את הקוד.
-
-שניהם רואים את אותן הוצאות.
+Keep the existing Supabase/Vercel environment variables. No database migration is required because the existing transactions table already contains `card_last4` and supports updates.
