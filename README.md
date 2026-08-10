@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/30895055/README.md)
 # Home Expenses V9
 
 V9 builds on V8 and adds a broader household-finance workflow:
@@ -27,3 +28,6 @@ Keep the existing Supabase/Vercel integration variables. `vite.config.js` expose
 - Month summary shows a reconciliation check between total expenses and category totals.
 - Category detail and filters use the same fallback category.
 - Existing merchant rules continue to apply across previous transactions and future imports.
+
+## V13 rule behavior
+"העבר + כלל" is global for the household: it updates every existing matching merchant transaction across all months, not only the selected transactions. The saved rule also applies to future imports.
