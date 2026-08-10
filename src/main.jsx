@@ -41,7 +41,35 @@ function App({session}){
  async function createMerchantRule(transaction,category){const key=merchantKey(transaction.merchant);if(!key)return setMsg("לא ניתן לזהות את העסק");const{error}=await supabase.from("merchant_category_rules").upsert({household_id:home.id,merchant_key:key,merchant_label:key,category},{onConflict:"household_id,merchant_key"});if(error)return setMsg(error.message);const candidates=tx.filter(x=>isExpense(x)&&merchantKey(x.merchant)===key);if(candidates.length){const{error:e}=await supabase.from("transactions").update({category}).in("id",candidates.map(x=>x.id));if(e)return setMsg(e.message)}setMsg(`נשמר כלל: ${key} → ${category}. ${candidates.length} הוצאות עודכנו.`);setModal(null);setDetail(null);load()}
  async function deleteRule(id){if(!confirm("למחוק את כלל העסק?"))return;const{error}=await supabase.from("merchant_category_rules").delete().eq("id",id);if(error)setMsg(error.message);else load()}
  async function applyBulk(ids,category,clear){if(!category||!ids.length)return;const{error}=await supabase.from("transactions").update({category}).in("id",ids);if(error)return setMsg(error.message);setMsg(`${ids.length} הוצאות הועברו ל-${category}`);clear?.(new Set());load()}
- async function applyBulkRule(ids,category,clear){if(!category||!ids.length)return;const rows=tx.filter(x=>ids.includes(x.id)&&isExpense(x));const keys=[...new Set(rows.map(x=>merchantKey(x.merchant)).filter(Boolean))];for(const key of keys){const{error}=await supabase.from("merchant_category_rules").upsert({household_id:home.id,merchant_key:key,merchant_label:key,category},{onConflict:"household_id,merchant_key"});if(error)return setMsg(error.message)}const{error}=await supabase.from("transactions").update({category}).in("id",rows.map(x=>x.id));if(error)return setMsg(error.message);setMsg(`נוצרו ${keys.length} כללי עסק והועברו ${rows.length} הוצאות.`);clear?.(new Set());load()}
+ async function applyBulkRule(ids,category,clear){
+  if(!category||!ids.length)return;
+  const selectedRows=tx.filter(x=>ids.includes(x.id)&&isExpense(x));
+  const keys=[...new Set(selectedRows.map(x=>merchantKey(x.merchant)).filter(Boolean))];
+  if(!keys.length)return setMsg("לא ניתן לזהות את העסקים שנבחרו");
+
+  // A rule is global for the household: when the user chooses “העבר + כלל",
+  // apply it not only to the selected rows, but to every existing transaction
+  // in every month that belongs to the same normalized merchant.
+  for(const key of keys){
+    const{error}=await supabase.from("merchant_category_rules").upsert({
+      household_id:home.id,
+      merchant_key:key,
+      merchant_label:key,
+      category
+    },{onConflict:"household_id,merchant_key"});
+    if(error)return setMsg(error.message);
+  }
+
+  const allMatching=tx.filter(x=>isExpense(x)&&keys.includes(merchantKey(x.merchant)));
+  if(allMatching.length){
+    const{error}=await supabase.from("transactions").update({category}).in("id",allMatching.map(x=>x.id));
+    if(error)return setMsg(error.message);
+  }
+
+  setMsg(`נוצרו ${keys.length} כללי עסק. ${allMatching.length} הוצאות מכל החודשים עודכנו ל-${category}.`);
+  clear?.(new Set());
+  load();
+}
  async function saveManual(f){const amount=Math.abs(num(f.amount));if(!amount)return setMsg("צריך להזין סכום");const d=f.date||today();const row={household_id:home.id,user_id:session.user.id,external_id:`manual-${crypto.randomUUID()}`,date:d,month:d.slice(0,7),merchant:f.merchant?.trim()||f.category,amount,category:f.category||"לא מסווג",source:"ידני",kind:"manual",payment_method:f.payment_method,card_last4:f.card_last4||null,notes:f.notes?.trim()||null};const{error}=await supabase.from("transactions").insert(row);if(error)setMsg(error.message);else{setModal(null);setMsg("ההוצאה נוספה");load()}}
  async function updateTransaction(f){const amount=Math.abs(num(f.amount));if(!amount)return setMsg("צריך להזין סכום");const d=f.date||today();const row={date:d,month:d.slice(0,7),merchant:f.merchant?.trim()||f.category,amount,category:f.category||"לא מסווג",payment_method:f.payment_method||"אשראי",card_last4:f.card_last4||null,notes:f.notes?.trim()||null};const{error}=await supabase.from("transactions").update(row).eq("id",f.id);if(error)setMsg(error.message);else{setModal(null);setDetail(null);setMsg("התנועה עודכנה");load()}}
  async function importFiles(e){try{setMsg("מייבא קבצים…");for(const f of [...e.target.files]){let rows=f.name.toLowerCase().endsWith(".pdf")?await importBankPdf(f):await importXlsx(f);rows=rows.map(x=>({...x,household_id:home.id,user_id:session.user.id,category:matchingRule(x.merchant)?.category||x.category||"לא מסווג"}));const sourceTotal=rows.reduce((s,x)=>s+Math.max(0,num(x.amount)),0);const expenseRows=rows.filter(isExpense);const sourceExpenseTotal=expenseRows.reduce((s,x)=>s+num(x.amount),0);const sourceExpenseCount=expenseRows.length;const monthTotals={};const monthExpenseTotals={};for(const r of rows){if(r.month){monthTotals[r.month]=(monthTotals[r.month]||0)+Math.max(0,num(r.amount));if(isExpense(r))monthExpenseTotals[r.month]=(monthExpenseTotals[r.month]||0)+num(r.amount)}}const fileKey=`${f.name}|${Object.entries(monthTotals).sort().map(([m,v])=>`${m}:${v.toFixed(2)}`).join("|")}`;const{data:batch,error:be}=await supabase.from("import_batches").upsert({household_id:home.id,user_id:session.user.id,file_name:f.name,file_key:fileKey,source:f.name.toLowerCase().endsWith(".pdf")?"עו״ש":"אשראי",source_total:sourceTotal,source_expense_total:sourceExpenseTotal,source_expense_count:sourceExpenseCount,row_count:rows.length,month_totals:monthTotals,month_expense_totals:monthExpenseTotals,imported_at:new Date().toISOString()},{onConflict:"household_id,file_key"}).select().single();if(be)throw be;rows=rows.map(x=>({...x,import_batch_id:batch.id}));if(rows.length){const{error}=await supabase.from("transactions").upsert(rows,{onConflict:"household_id,external_id"});if(error)throw error}}setMsg(`ייבוא הסתיים: ${[...e.target.files].length} קבצים`);load()}catch(err){setMsg("שגיאה בייבוא: "+err.message)}finally{e.target.value=""}}
