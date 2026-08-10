@@ -1,33 +1,22 @@
-[README.md](https://github.com/user-attachments/files/30895055/README.md)
-# Home Expenses V9
+# Home Expenses V14
 
-V9 builds on V8 and adds a broader household-finance workflow:
+V14 focuses on reliable importing and avoiding double-counting between bank account and credit-card data.
 
-- Full transaction table with search/filter and bulk selection.
-- Edit any transaction, including category, merchant, payment method and card last 4.
-- Merchant rules that apply across historical transactions and future imports.
-- Bulk recategorization and bulk creation of merchant rules.
-- Category drill-down from monthly and comparison views.
-- Side-by-side month comparison with clickable category/month totals.
-- Insights: month-over-month changes, budget alerts, savings rate when income exists, top categories.
-- Recurring-expense detection as an indication (not an automatic subscription classification).
-- Monthly budgets with 80%/100% thresholds.
-- Card last-4 display when supplied by the imported file.
-- Shared household data through Supabase.
+## Bank files
+- Supports Israeli bank `.xls` exports that are actually HTML tables.
+- Detects columns such as תאריך, תאריך ערך, תיאור/פרטים, אסמכתא, בחובה, בזכות, יתרה.
+- Bank credit-card settlement rows are stored as `card_payment` / `card_statement` and are excluded from expense totals.
+- Income and transfers are excluded from expense totals.
 
-## Supabase migration
-Run `supabase/v9_upgrade.sql` once in Supabase SQL Editor. It is idempotent.
+## Re-import behavior
+Imports are treated as syncs, not replacement.
+- A previously imported identical file is skipped.
+- Existing transaction external IDs are skipped.
+- New transactions are inserted.
+- Original source totals remain in `import_batches`.
 
-## Vercel
-Keep the existing Supabase/Vercel integration variables. `vite.config.js` exposes only the public Supabase URL and publishable/anon key to the browser at build time.
+## Credit-card reconciliation
+The app shows bank credit-card settlements separately and compares them with imported card purchases for the payment month and the previous month. This helps confirm that the bank settlement is not counted as a second expense.
 
-
-## V10 – data integrity and category fixes
-- Category summaries include categories present in actual transactions, not only predefined categories.
-- Uncategorized transactions are displayed as "לא מסווג" so no expense disappears from summaries.
-- Month summary shows a reconciliation check between total expenses and category totals.
-- Category detail and filters use the same fallback category.
-- Existing merchant rules continue to apply across previous transactions and future imports.
-
-## V13 rule behavior
-"העבר + כלל" is global for the household: it updates every existing matching merchant transaction across all months, not only the selected transactions. The saved rule also applies to future imports.
+## Supabase
+Run `supabase/v14_upgrade.sql` in Supabase SQL Editor before deploying.

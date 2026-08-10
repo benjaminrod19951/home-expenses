@@ -67,6 +67,76 @@ function parseCardRows(rows, sourceName) {
   }).filter(Boolean);
 }
 
+export async function importBankXls(file) {
+  // Israeli bank exports are often .xls files that are actually HTML tables.
+  const text = await file.text();
+  if (!/<table[\s>]/i.test(text)) {
+    // Some genuine XLS files can still be parsed by SheetJS.
+    return importXlsx(file);
+  }
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  const tables = [...doc.querySelectorAll("table")];
+  const result = [];
+  for (const table of tables) {
+    const rows = [...table.querySelectorAll("tr")].map(tr =>
+      [...tr.querySelectorAll("th,td")].map(td => td.textContent.replace(/\u00a0/g," ").trim())
+    ).filter(r => r.length);
+    if (!rows.length) continue;
+    const headerIndex = rows.findIndex(r => {
+      const s = r.map(norm).join(" | ");
+      return /תאריך/.test(s) && (/תיאור/.test(s) || /פרטים/.test(s)) &&
+             (/בחובה|חובה|סכום/.test(s));
+    });
+    if (headerIndex < 0) continue;
+
+    const h = rows[headerIndex].map(norm);
+    const find = (...names) => {
+      for (const n of names) {
+        const i = h.findIndex(x => x === norm(n) || x.includes(norm(n)));
+        if (i >= 0) return i;
+      }
+      return -1;
+    };
+    const iDate=find("תאריך");
+    const iValue=find("תאריך ערך");
+    const iDesc=find("תיאור","פרטים");
+    const iRef=find("אסמכתא");
+    const iDebit=find("בחובה","חובה");
+    const iCredit=find("בזכות","זכות");
+    const iBalance=find("יתרה");
+    const iNote=find("הערה","הערות");
+
+    for (let i=headerIndex+1;i<rows.length;i++) {
+      const r=rows[i];
+      const date=isoDate(r[iDate]);
+      if (!date) continue;
+      const merchant=String(r[iDesc]??"").trim();
+      if (!merchant) continue;
+      const debit=Math.abs(num(r[iDebit]));
+      const credit=Math.abs(num(r[iCredit]));
+      if (!debit && !credit) continue;
+
+      const isCardPayment=/לאומי ויזה|לאומי כאל|ישראכרט|מקס|ויזה|כאל|mastercard|visa/i.test(merchant);
+      const isTransfer=/העברה|הפקדה|פייבוקס|ביט|מבנק|בנקאי|חיסכון|פיקדון/i.test(merchant);
+      const kind = credit ? "income" : (isCardPayment ? "card_payment" : (isTransfer ? "transfer" : "bank_expense"));
+      const category = credit ? "הכנסה" : (isCardPayment ? "חיוב כרטיס אשראי" : (isTransfer ? "העברה" : bankCategory(merchant)));
+      const amount = credit || debit;
+      const ref=String(r[iRef]??"").trim();
+      const valueDate=isoDate(r[iValue]) || date;
+      const external_id=`bank-${date}-${valueDate}-${ref}-${merchant}-${amount.toFixed(2)}-${credit?"credit":"debit"}`;
+
+      result.push({
+        date, value_date:valueDate, month:month(date), merchant, amount,
+        category, source:"עו״ש", kind, payment_method:"עו״ש",
+        reference:ref, notes:String(r[iNote]??"").trim()||null,
+        balance:num(r[iBalance])||null,
+        external_id
+      });
+    }
+  }
+  return result;
+}
+
 export async function importXlsx(file) {
   const wb = XLSX.read(await file.arrayBuffer(), {type:"array", cellDates:true});
   const result = [];
