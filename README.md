@@ -1,28 +1,17 @@
-# Home Expenses V14
+# Home Expenses V17
 
-V14 focuses on reliable importing and avoiding double-counting between bank account and credit-card data.
+V17 introduces a strict financial-flow model:
 
-## Bank files
-- Supports Israeli bank `.xls` exports that are actually HTML tables.
-- Detects columns such as תאריך, תאריך ערך, תיאור/פרטים, אסמכתא, בחובה, בזכות, יתרה.
-- Bank credit-card settlement rows are stored as `card_payment` / `card_statement` and are excluded from expense totals.
-- Income and transfers are excluded from expense totals.
-
-## Re-import behavior
-Imports are treated as syncs, not replacement.
-- A previously imported identical file is skipped.
-- Existing transaction external IDs are skipped.
-- New transactions are inserted.
-- Original source totals remain in `import_batches`.
-
-## Credit-card reconciliation
-The app shows bank credit-card settlements separately and compares them with imported card purchases for the payment month and the previous month. This helps confirm that the bank settlement is not counted as a second expense.
+- Card purchases and real bank expenses appear together in the household expense table.
+- Credit-card settlement lines in the bank account are classified as `card_payment` and are not counted as a second expense.
+- Savings/deposit opening and redemption are classified as transfers by default. The transaction editor lets the user enter only the actual income portion (e.g. interest) when a deposit redemption contains both principal and interest.
+- Unknown bank credits are classified as `income_review` instead of being silently counted as income.
+- Explicit salary/benefit/pension credits can be counted as income.
+- A stable `source_key` lets corrected imports update an old, incorrectly parsed bank row instead of creating a duplicate.
+- Leumi `.xls` HTML exports are parsed from the HTML table first, preventing the balance column from being mistaken for the credit column.
 
 ## Supabase
-Run `supabase/v14_upgrade.sql` in Supabase SQL Editor before deploying.
 
+Run `supabase/v17_financial_flow.sql` once in Supabase SQL Editor before deploying V17.
 
-## V16 import fix
-- Leumi `.xls` files are parsed as bank HTML before any generic XLSX parser.
-- No first-20KB sniffing is used, because the transaction table can appear later in the HTML.
-- A previous zero-row import batch is cleaned up and cannot block a corrected re-import.
+Then upload the project contents to GitHub and let Vercel deploy it.
