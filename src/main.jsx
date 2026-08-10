@@ -74,7 +74,13 @@ function App({session}){
  async function updateTransaction(f){const amount=Math.abs(num(f.amount));if(!amount)return setMsg("צריך להזין סכום");const d=f.date||today();const row={date:d,month:d.slice(0,7),merchant:f.merchant?.trim()||f.category,amount,category:f.category||"לא מסווג",payment_method:f.payment_method||"אשראי",card_last4:f.card_last4||null,notes:f.notes?.trim()||null};const{error}=await supabase.from("transactions").update(row).eq("id",f.id);if(error)setMsg(error.message);else{setModal(null);setDetail(null);setMsg("התנועה עודכנה");load()}}
  async function importFiles(e){try{setMsg("מנתח את הקבצים…");let report=[];for(const f of [...e.target.files]){const lower=f.name.toLowerCase();let rows;let source;
  if(lower.endsWith(".pdf")){rows=await importBankPdf(f);source="עו״ש";}
- else if(lower.endsWith(".xls")){const head=await f.slice(0,20000).text();const looksLikeBankHtml=/<table[\\s>]/i.test(head)&&/תאריך/i.test(head)&&(/בחובה|בזכות/i.test(head));rows=looksLikeBankHtml?await importBankXls(f):await importXlsx(f);source=looksLikeBankHtml?"עו״ש":"אשראי";}
+ else if(lower.endsWith(".xls")){
+  // Leumi bank exports use .xls but are HTML documents. The transaction table
+  // may be far beyond the first 20KB, so never sniff only the beginning.
+  rows=await importBankXls(f);
+  source=rows.length?"עו״ש":"אשראי";
+  if(!rows.length){rows=await importXlsx(f); source="אשראי";}
+}
  else {rows=await importXlsx(f);source="אשראי";}
  rows=rows.map(x=>({...x,household_id:home.id,user_id:session.user.id,category:matchingRule(x.merchant)?.category||x.category||"לא מסווג"}));
  const sourceTotal=rows.reduce((s,x)=>s+(isIncome(x)?num(x.amount):Math.max(0,num(x.amount))),0);
@@ -85,7 +91,10 @@ function App({session}){
  // A previous failed parser could have created a zero-row batch. Never let that
  // block a corrected re-import; remove the empty batch and parse again.
  if(existingBatch && Number(existingBatch.row_count||0)>0){report.push(`${f.name}: כבר יובא בעבר (${existingBatch.row_count} שורות), לא נוספו כפילויות.`);continue}
- if(existingBatch && Number(existingBatch.row_count||0)===0){await supabase.from("import_batches").delete().eq("id",existingBatch.id)}
+ if(existingBatch && Number(existingBatch.row_count||0)===0){
+   const {error:cleanupError}=await supabase.from("import_batches").delete().eq("id",existingBatch.id);
+   if(cleanupError) throw cleanupError;
+ }
  if(!rows.length){report.push(`${f.name}: לא נמצאו תנועות. הקובץ לא סומן כמיובא כדי שאפשר יהיה לנסות שוב.`);continue}
  const{data:batch,error:be}=await supabase.from("import_batches").insert({household_id:home.id,user_id:session.user.id,file_name:f.name,file_key:fileKey,source,source_total:sourceTotal,source_expense_total:sourceExpenseTotal,source_expense_count:sourceExpenseCount,row_count:rows.length,month_totals:monthTotals,month_expense_totals:monthExpenseTotals,imported_at:new Date().toISOString()}).select().single();if(be)throw be;
  rows=rows.map(x=>({...x,import_batch_id:batch.id}));

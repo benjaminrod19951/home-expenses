@@ -20,3 +20,9 @@ The app shows bank credit-card settlements separately and compares them with imp
 
 ## Supabase
 Run `supabase/v14_upgrade.sql` in Supabase SQL Editor before deploying.
+
+
+## V16 import fix
+- Leumi `.xls` files are parsed as bank HTML before any generic XLSX parser.
+- No first-20KB sniffing is used, because the transaction table can appear later in the HTML.
+- A previous zero-row import batch is cleaned up and cannot block a corrected re-import.
