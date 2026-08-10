@@ -82,7 +82,11 @@ function App({session}){
  const monthTotals={},monthExpenseTotals={};for(const r of rows){if(r.month){monthTotals[r.month]=(monthTotals[r.month]||0)+num(r.amount);if(isExpense(r))monthExpenseTotals[r.month]=(monthExpenseTotals[r.month]||0)+num(r.amount)}}
  const fileKey=`${source}|${f.name}|${rows.length}|${Object.entries(monthTotals).sort().map(([m,v])=>`${m}:${v.toFixed(2)}`).join("|")}`;
  const{data:existingBatch,error:lookupError}=await supabase.from("import_batches").select("id,row_count,source_expense_count,source_expense_total").eq("household_id",home.id).eq("file_key",fileKey).maybeSingle();if(lookupError)throw lookupError;
- if(existingBatch){report.push(`${f.name}: כבר יובא בעבר (${existingBatch.row_count} שורות), לא נוספו כפילויות.`);continue}
+ // A previous failed parser could have created a zero-row batch. Never let that
+ // block a corrected re-import; remove the empty batch and parse again.
+ if(existingBatch && Number(existingBatch.row_count||0)>0){report.push(`${f.name}: כבר יובא בעבר (${existingBatch.row_count} שורות), לא נוספו כפילויות.`);continue}
+ if(existingBatch && Number(existingBatch.row_count||0)===0){await supabase.from("import_batches").delete().eq("id",existingBatch.id)}
+ if(!rows.length){report.push(`${f.name}: לא נמצאו תנועות. הקובץ לא סומן כמיובא כדי שאפשר יהיה לנסות שוב.`);continue}
  const{data:batch,error:be}=await supabase.from("import_batches").insert({household_id:home.id,user_id:session.user.id,file_name:f.name,file_key:fileKey,source,source_total:sourceTotal,source_expense_total:sourceExpenseTotal,source_expense_count:sourceExpenseCount,row_count:rows.length,month_totals:monthTotals,month_expense_totals:monthExpenseTotals,imported_at:new Date().toISOString()}).select().single();if(be)throw be;
  rows=rows.map(x=>({...x,import_batch_id:batch.id}));
  let added=0,dupes=0;

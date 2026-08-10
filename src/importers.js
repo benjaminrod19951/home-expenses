@@ -68,55 +68,40 @@ function parseCardRows(rows, sourceName) {
 }
 
 export async function importBankXls(file) {
-  // Israeli bank exports are often .xls files that are actually HTML tables.
-  const text = await file.text();
-  if (!/<table[\s>]/i.test(text)) {
-    // Some genuine XLS files can still be parsed by SheetJS.
-    return importXlsx(file);
-  }
-  const doc = new DOMParser().parseFromString(text, "text/html");
-  const tables = [...doc.querySelectorAll("table")];
-  const result = [];
-  for (const table of tables) {
-    const rows = [...table.querySelectorAll("tr")].map(tr =>
-      [...tr.querySelectorAll("th,td")].map(td => td.textContent.replace(/\u00a0/g," ").trim())
-    ).filter(r => r.length);
-    if (!rows.length) continue;
+  // Bank exports from Leumi often have an .xls extension but are actually HTML.
+  // We use two parsers: SheetJS first, then DOMParser as a fallback.
+  const buf = await file.arrayBuffer();
+  const parseBankRows = (rows) => {
+    if (!rows?.length) return [];
     const headerIndex = rows.findIndex(r => {
       const s = r.map(norm).join(" | ");
-      return /תאריך/.test(s) && (/תיאור/.test(s) || /פרטים/.test(s)) &&
-             (/בחובה|חובה|סכום/.test(s));
+      return /תאריך/.test(s) && (/תיאור/.test(s) || /פרטים/.test(s)) && (/בחובה|חובה/.test(s));
     });
-    if (headerIndex < 0) continue;
-
+    if (headerIndex < 0) return [];
     const h = rows[headerIndex].map(norm);
     const find = (...names) => {
       for (const n of names) {
-        const i = h.findIndex(x => x === norm(n) || x.includes(norm(n)));
+        const nn = norm(n);
+        const i = h.findIndex(x => x === nn || x.includes(nn));
         if (i >= 0) return i;
       }
       return -1;
     };
-    const iDate=find("תאריך");
-    const iValue=find("תאריך ערך");
-    const iDesc=find("תיאור","פרטים");
-    const iRef=find("אסמכתא");
-    const iDebit=find("בחובה","חובה");
-    const iCredit=find("בזכות","זכות");
-    const iBalance=find("יתרה");
-    const iNote=find("הערה","הערות");
-
-    for (let i=headerIndex+1;i<rows.length;i++) {
-      const r=rows[i];
+    const iDate=find("תאריך"), iValue=find("תאריך ערך"), iDesc=find("תיאור","פרטים"),
+      iRef=find("אסמכתא"), iDebit=find("בחובה","חובה"), iCredit=find("בזכות","זכות"),
+      iBalance=find("יתרה בש"), iNote=find("הערה","הערות");
+    if(iDate<0 || iDesc<0 || iDebit<0 || iCredit<0) return [];
+    const result=[];
+    for(let i=headerIndex+1;i<rows.length;i++){
+      const r=rows[i]||[];
       const date=isoDate(r[iDate]);
-      if (!date) continue;
+      if(!date) continue;
       const merchant=String(r[iDesc]??"").trim();
-      if (!merchant) continue;
+      if(!merchant) continue;
       const debit=Math.abs(num(r[iDebit]));
       const credit=Math.abs(num(r[iCredit]));
-      if (!debit && !credit) continue;
-
-      const isCardPayment=/לאומי ויזה|לאומי כאל|ישראכרט|מקס|ויזה|כאל|mastercard|visa/i.test(merchant);
+      if(!debit && !credit) continue;
+      const isCardPayment=/לאומי\s*(ויזה|כאל)|בנהפ[- ]?ישראכרט|ישראכרט|מקס|ויזה|כאל|mastercard|visa/i.test(merchant);
       const isTransfer=/העברה|הפקדה|פייבוקס|ביט|מבנק|בנקאי|חיסכון|פיקדון/i.test(merchant);
       const kind = credit ? "income" : (isCardPayment ? "card_payment" : (isTransfer ? "transfer" : "bank_expense"));
       const category = credit ? "הכנסה" : (isCardPayment ? "חיוב כרטיס אשראי" : (isTransfer ? "העברה" : bankCategory(merchant)));
@@ -124,17 +109,33 @@ export async function importBankXls(file) {
       const ref=String(r[iRef]??"").trim();
       const valueDate=isoDate(r[iValue]) || date;
       const external_id=`bank-${date}-${valueDate}-${ref}-${merchant}-${amount.toFixed(2)}-${credit?"credit":"debit"}`;
+      result.push({date,value_date:valueDate,month:month(date),merchant,amount,category,source:"עו״ש",kind,payment_method:"עו״ש",reference:ref,notes:String(r[iNote]??"").trim()||null,balance:num(r[iBalance])||null,external_id});
+    }
+    return result;
+  };
 
-      result.push({
-        date, value_date:valueDate, month:month(date), merchant, amount,
-        category, source:"עו״ש", kind, payment_method:"עו״ש",
-        reference:ref, notes:String(r[iNote]??"").trim()||null,
-        balance:num(r[iBalance])||null,
-        external_id
-      });
+  // SheetJS can parse HTML disguised as XLS and is generally more robust with
+  // the very large Leumi export than relying on DOMParser alone.
+  try {
+    const wb = XLSX.read(buf, {type:"array", cellDates:true});
+    for (const sheet of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheet], {header:1, defval:""});
+      const parsed = parseBankRows(rows);
+      if (parsed.length) return parsed;
+    }
+  } catch (_) {}
+
+  // Fallback for browsers where SheetJS does not expose the HTML table.
+  const text = new TextDecoder("utf-8").decode(buf);
+  if (/<table[\s>]/i.test(text)) {
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    for (const table of [...doc.querySelectorAll("table")]) {
+      const rows=[...table.querySelectorAll("tr")].map(tr=>[...tr.querySelectorAll("th,td")].map(td=>td.textContent.replace(/\u00a0/g," ").trim())).filter(r=>r.length);
+      const parsed=parseBankRows(rows);
+      if(parsed.length) return parsed;
     }
   }
-  return result;
+  return [];
 }
 
 export async function importXlsx(file) {
