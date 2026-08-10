@@ -34,7 +34,24 @@ function IncomeReviewPanel({rows,onEdit}){if(!rows.length)return null;return <se
 
 function App({session}){
  const[home,setHome]=useState(null),[tx,setTx]=useState([]),[cats,setCats]=useState(DEFAULT_CATS),[rules,setRules]=useState([]),[budgets,setBudgets]=useState([]),[imports,setImports]=useState([]),[loading,setLoading]=useState(true),[msg,setMsg]=useState(""),[modal,setModal]=useState(null),[selectedMonth,setSelectedMonth]=useState(""),[view,setView]=useState("month"),[detail,setDetail]=useState(null),[categoryFilter,setCategoryFilter]=useState(null),[selectedIds,setSelectedIds]=useState(new Set()),[bulkCategory,setBulkCategory]=useState(""),[search,setSearch]=useState(""),[sort,setSort]=useState({key:"date",dir:"desc"});
- async function load(){setLoading(true);const{data:members,error:me}=await supabase.from("household_members").select("household_id").eq("user_id",session.user.id);if(me){setMsg(me.message);setLoading(false);return}if(!members?.length){setHome(null);setLoading(false);return}const hid=members[0].household_id;const[{data:h,error:he},{data:t,error:te},{data:c},{data:r},{data:b},{data:ib}]=await Promise.all([supabase.from("households").select("*").eq("id",hid).single(),supabase.from("transactions").select("*").eq("household_id",hid).order("date",{ascending:false}),supabase.from("categories").select("name").eq("household_id",hid),supabase.from("merchant_category_rules").select("*").eq("household_id",hid).order("merchant_label"),supabase.from("budgets").select("*").eq("household_id",hid),supabase.from("import_batches").select("*").eq("household_id",hid).order("created_at",{ascending:false})]);if(he||te){setMsg((he||te)?.message||"שגיאה בטעינת הנתונים");setLoading(false);return}setHome(h);setTx(t||[]);setCats([...new Set([...DEFAULT_CATS,...(c||[]).map(x=>x.name),...(t||[]).map(catName).filter(Boolean),"לא מסווג"])]);setRules(r||[]);setBudgets(b||[]);setImports(ib||[]);setSelectedIds(new Set());setLoading(false)}
+ async function repairLegacyBankRows(hid){
+  // Older versions accidentally stored DDMMYYYY as the amount for bank rows
+  // (e.g. 30/07/2026 became 30,072,026). Remove only rows matching this exact
+  // corruption signature; legitimate large transactions are left untouched.
+  const {data:bad,error}=await supabase.from("transactions").select("id,date,amount,source").eq("household_id",hid).eq("source","עו״ש").gte("amount",10000000).lte("amount",99999999);
+  if(error||!bad?.length)return 0;
+  const ids=bad.filter(x=>{
+    if(!x.date)return false;
+    const d=new Date(`${x.date}T00:00:00`); if(Number.isNaN(d.getTime()))return false;
+    const dd=String(d.getDate()).padStart(2,"0"),mm=String(d.getMonth()+1).padStart(2,"0"),yyyy=String(d.getFullYear());
+    return Math.round(Number(x.amount))===Number(`${dd}${mm}${yyyy}`);
+  }).map(x=>x.id);
+  if(!ids.length)return 0;
+  const {error:de}=await supabase.from("transactions").delete().in("id",ids);
+  if(de)return 0;
+  return ids.length;
+}
+ async function load(){setLoading(true);const{data:members,error:me}=await supabase.from("household_members").select("household_id").eq("user_id",session.user.id);if(me){setMsg(me.message);setLoading(false);return}if(!members?.length){setHome(null);setLoading(false);return}const hid=members[0].household_id;await repairLegacyBankRows(hid);const[{data:h,error:he},{data:t,error:te},{data:c},{data:r},{data:b},{data:ib}]=await Promise.all([supabase.from("households").select("*").eq("id",hid).single(),supabase.from("transactions").select("*").eq("household_id",hid).order("date",{ascending:false}),supabase.from("categories").select("name").eq("household_id",hid),supabase.from("merchant_category_rules").select("*").eq("household_id",hid).order("merchant_label"),supabase.from("budgets").select("*").eq("household_id",hid),supabase.from("import_batches").select("*").eq("household_id",hid).order("created_at",{ascending:false})]);if(he||te){setMsg((he||te)?.message||"שגיאה בטעינת הנתונים");setLoading(false);return}setHome(h);setTx(t||[]);setCats([...new Set([...DEFAULT_CATS,...(c||[]).map(x=>x.name),...(t||[]).map(catName).filter(Boolean),"לא מסווג"])]);setRules(r||[]);setBudgets(b||[]);setImports(ib||[]);setSelectedIds(new Set());setLoading(false)}
  useEffect(()=>{load()},[]);
  async function createHome(){const code=Math.random().toString(36).slice(2,8).toUpperCase();const{error}=await supabase.rpc("create_household",{house_name:"הבית שלנו",code});if(error)setMsg(error.message);else{setMsg(`הבית נוצר. קוד: ${code}`);load()}}
  async function joinHome(){const code=prompt("הכנס את קוד הבית:");if(!code)return;const{error}=await supabase.rpc("join_household_by_code",{code});if(error)setMsg(error.message);else load()}

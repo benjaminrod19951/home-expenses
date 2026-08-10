@@ -90,25 +90,57 @@ function parseBankRows(rows){
 
 export async function importBankXls(file){
   const buf=await file.arrayBuffer();
-  // Leumi .xls exports are HTML. Parse the HTML tables FIRST so the balance
-  // column can never be mistaken for the credit column by a spreadsheet parser.
-  try{
+
+  // Leumi exports use .xls as a wrapper around an HTML document.  Do NOT let
+  // SheetJS guess the structure first: the real bank table has 8 columns and
+  // must map debit/credit/balance by their Hebrew headers.
+  const decodeHtml = (s) => s
+    .replace(/&nbsp;/gi," ")
+    .replace(/&amp;/gi,"&")
+    .replace(/&quot;/gi,'"')
+    .replace(/&#39;/gi,"'")
+    .replace(/&#x27;/gi,"'")
+    .replace(/<br\s*\/?>/gi," ")
+    .replace(/<[^>]*>/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+
+  try {
     const text=new TextDecoder("utf-8").decode(buf);
-    if(/<table[\s>]/i.test(text)){
-      const doc=new DOMParser().parseFromString(text,"text/html");
-      for(const table of [...doc.querySelectorAll("table")]){
-        const rows=[...table.querySelectorAll("tr")].map(tr=>[...tr.querySelectorAll("th,td")].map(td=>td.textContent.replace(/\u00a0/g," ").trim())).filter(r=>r.length);
-        const parsed=parseBankRows(rows); if(parsed.length)return parsed;
-      }
+    // Find the table whose header contains all bank columns.  This avoids
+    // accidentally reading the summary tables at the top of the export.
+    const tables=[...text.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/gi)].map(m=>m[0]);
+    for(const html of tables){
+      const probe=decodeHtml(html);
+      if(!probe.includes("תאריך ערך") || !probe.includes("תיאור") || !probe.includes("אסמכתא") || !probe.includes("בחובה") || !probe.includes("בזכות")) continue;
+      const rows=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>
+        [...m[1].matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(c=>decodeHtml(c[1]))
+      ).filter(r=>r.length);
+      const parsed=parseBankRows(rows);
+      if(parsed.length) return parsed;
     }
-  }catch(_){ }
+  } catch(_) {}
+
+  // Fallback for browsers where regex/HTML parsing is not available.
+  try {
+    const doc=new DOMParser().parseFromString(new TextDecoder("utf-8").decode(buf),"text/html");
+    for(const table of [...doc.querySelectorAll("table")]){
+      const rows=[...table.querySelectorAll("tr")].map(tr=>[...tr.querySelectorAll("th,td")].map(td=>td.textContent.replace(/\u00a0/g," ").replace(/\s+/g," ").trim())).filter(r=>r.length);
+      const parsed=parseBankRows(rows);
+      if(parsed.length)return parsed;
+    }
+  } catch(_) {}
+
+  // Last resort: a genuine binary Excel workbook.
   try{
     const wb=XLSX.read(buf,{type:"array",cellDates:true});
-    for(const sheet of wb.SheetNames){const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:""});const parsed=parseBankRows(rows);if(parsed.length)return parsed;}
-  }catch(_){ }
+    for(const sheet of wb.SheetNames){
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:""});
+      const parsed=parseBankRows(rows); if(parsed.length)return parsed;
+    }
+  }catch(_){}
   return [];
 }
-
 export async function importXlsx(file){
   const wb=XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true}); const result=[];
   for(const sheet of wb.SheetNames){const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:""});result.push(...parseCardRows(rows,`${file.name}:${sheet}`));}

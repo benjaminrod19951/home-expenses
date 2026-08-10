@@ -1,6 +1,6 @@
-# Home Expenses V17
+# Home Expenses V18
 
-V17 introduces a strict financial-flow model:
+V18 introduces a strict financial-flow model:
 
 - Card purchases and real bank expenses appear together in the household expense table.
 - Credit-card settlement lines in the bank account are classified as `card_payment` and are not counted as a second expense.
@@ -12,6 +12,9 @@ V17 introduces a strict financial-flow model:
 
 ## Supabase
 
-Run `supabase/v17_financial_flow.sql` once in Supabase SQL Editor before deploying V17.
+Run `supabase/v17_financial_flow.sql` once in Supabase SQL Editor before deploying V18.
 
 Then upload the project contents to GitHub and let Vercel deploy it.
+
+
+V18 fixes the Leumi HTML .xls importer and repairs the legacy DDMMYYYY-as-amount corruption before loading transactions.
