@@ -19,3 +19,11 @@ Run `supabase/v9_upgrade.sql` once in Supabase SQL Editor. It is idempotent.
 
 ## Vercel
 Keep the existing Supabase/Vercel integration variables. `vite.config.js` exposes only the public Supabase URL and publishable/anon key to the browser at build time.
+
+
+## V10 – data integrity and category fixes
+- Category summaries include categories present in actual transactions, not only predefined categories.
+- Uncategorized transactions are displayed as "לא מסווג" so no expense disappears from summaries.
+- Month summary shows a reconciliation check between total expenses and category totals.
+- Category detail and filters use the same fallback category.
+- Existing merchant rules continue to apply across previous transactions and future imports.
