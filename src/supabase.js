@@ -1,21 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
-
-const rawUrl = typeof __SUPABASE_URL__ !== "undefined" ? __SUPABASE_URL__ : "";
-const rawKey = typeof __SUPABASE_KEY__ !== "undefined" ? __SUPABASE_KEY__ : "";
-
-const supabaseUrl = String(rawUrl).trim().replace(/\/+$/, "");
-const supabaseKey = String(rawKey).trim();
-
-export const supabaseConfigError = !supabaseUrl
-  ? "Supabase URL חסר. ב-Vercel ודא שקיים SUPABASE_URL או VITE_SUPABASE_URL."
-  : !supabaseKey
-    ? "מפתח Supabase חסר. ב-Vercel ודא שקיים SUPABASE_PUBLISHABLE_KEY או SUPABASE_ANON_KEY."
-    : !/^https:\/\/[^/]+\.supabase\.co$/i.test(supabaseUrl)
-      ? `כתובת Supabase אינה תקינה: ${supabaseUrl}`
-      : "";
-
-export const supabase = supabaseConfigError
-  ? null
-  : createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-    });
+import {createClient} from '@supabase/supabase-js';
+const url=import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+export const supabaseConfigError=(!url||!key)?'חסרים מפתחות Supabase ב-Vercel Environment Variables. צריך להגדיר SUPABASE URL + PUBLISHABLE/ANON KEY.' : '';
+export const supabase=supabaseConfigError?null:createClient(url,key);
