@@ -26,3 +26,6 @@ Upload the contents of this ZIP to the existing GitHub repository. Vercel can ke
 - Category dashboard, month comparison, drill-down, multi-select recategorization, merchant rules, budgets and category integrity checks are restored.
 - Category-only changes do not modify `count_as_expense` or the transaction amount.
 - Future planning supports expected income and future expenses, with a combined history + plan forecast and projected savings.
+
+## V24.1 bank-import repair
+If older bank imports display impossible multi-million shekel amounts with a date in the merchant field, run `supabase/v24_1_repair_bank_import.sql` once, then re-import the Leumi bank file. The repair backs up only the unmistakably malformed rows before deleting them. The importer now rejects shifted rows defensively.

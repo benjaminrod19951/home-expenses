@@ -53,7 +53,11 @@ function classifyBank(desc,direction){
 
 function findBankHeader(rows){
   for(let i=0;i<Math.min(rows.length,100);i++){
-    const r=(rows[i]||[]).map(norm);
+    // A real Leumi header is a compact 8-column row. Ignore wrapper/nested HTML
+    // rows that contain the whole transaction table flattened into one row.
+    const raw=rows[i]||[];
+    if(raw.length<6 || raw.length>15) continue;
+    const r=raw.map(norm);
     const hasDate=r.some(x=>x==='תאריך'||x.includes('תאריך'));
     const hasDesc=r.some(x=>x.includes('תיאור')||x.includes('פעולה'));
     const hasDebit=r.some(x=>x.includes('בחובה')||x==='חובה');
@@ -72,18 +76,24 @@ function parseBankRows(rows){
   const refI=idx(headers,['אסמכתא']);
   const debitI=idx(headers,['בחובה','חובה']);
   const creditI=idx(headers,['בזכות','זכות']);
-  const balanceI=headers.findIndex(h=>h==='יתרה');
+  const balanceI=headers.findIndex(h=>h==='יתרה'||h.includes('יתרה'));
   const noteI=idx(headers,['הערה']);
   if([dateI,descI,debitI,creditI].some(i=>i<0))return [];
   const all=[];
   for(let r=index+1;r<rows.length;r++){
     const row=rows[r]||[];
     const date=excelDate(row[dateI]); if(!/^\d{4}-\d{2}-\d{2}$/.test(date))continue;
+    const merchantRaw=clean(row[descI]);
+    // Defensive guard: a shifted/flattened row must never turn a date string into
+    // a money amount (e.g. 09/07/2026 -> 9,072,026).
+    if(/^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(merchantRaw)) continue;
+    const debitCell=clean(row[debitI]), creditCell=clean(row[creditI]);
+    if(/^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(debitCell) || /^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(creditCell)) continue;
     const debit=absMoney(row[debitI]),credit=absMoney(row[creditI]);
     if(debit===0&&credit===0)continue;
     const direction=debit!==0?'out':'in';
     const amount=direction==='out'?debit:credit;
-    const merchant=clean(row[descI])||'תנועת בנק';
+    const merchant=merchantRaw||'תנועת בנק';
     const meta=classifyBank(merchant,direction);
     const ref=refI>=0?clean(row[refI]):'';
     const valueDate=valueDateI>=0?excelDate(row[valueDateI]):'';
