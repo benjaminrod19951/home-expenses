@@ -29,3 +29,7 @@ Upload the contents of this ZIP to the existing GitHub repository. Vercel can ke
 
 ## V24.1 bank-import repair
 If older bank imports display impossible multi-million shekel amounts with a date in the merchant field, run `supabase/v24_1_repair_bank_import.sql` once, then re-import the Leumi bank file. The repair backs up only the unmistakably malformed rows before deleting them. The importer now rejects shifted rows defensively.
+
+
+## V24.4
+See README-V24.4.md. Card details now take precedence over matching generic bank debits.

@@ -40,7 +40,7 @@ function classifyBank(desc,direction){
   const internal=/(העברה.*בין|העברה עצמית|חשבון שלי|חשבון.*שלי|פייבוקס שלי|paybox שלי|לאומי.*שלי)/i.test(n);
   const possibleOwnLeumi=/(בנק לאומי|לאומי לישראל|leumi)/i.test(n);
   const explicitIncome=/(משכורת|שכר עבודה|קצבת|קיצבה|פנסיה|ביטוח לאומי)/i.test(n);
-  if(direction==='out' && cardPayment) return {kind:'card_payment',flow_type:'card_payment',category:'חיוב כרטיס אשראי',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(direction==='out' && cardPayment) return {kind:'card_candidate',flow_type:'card_candidate',category:'אשראי ישיר / התאמה',count_as_expense:true,count_as_income:false,income_amount:0};
   if(saving) return {kind:'saving',flow_type:'saving',category:'חיסכון/פיקדון',count_as_expense:false,count_as_income:false,income_amount:0};
   if(internal) return {kind:'transfer',flow_type:'transfer',category:'העברה',count_as_expense:false,count_as_income:false,income_amount:0};
   if(direction==='in' && explicitIncome) return {kind:'income',flow_type:'income',category:'הכנסה',count_as_expense:false,count_as_income:true,income_amount:null};
