@@ -36,3 +36,5 @@
 .check-section:first-of-type{border-top:0}
 .check-section h3{margin:0 0 6px}
 .check-section p{margin:0 0 12px;color:#64748b}
+
+.periodic-note{display:block;margin-top:4px;font-size:11px;color:#667085;white-space:nowrap}.comparison td .amountlink{display:inline-block}
