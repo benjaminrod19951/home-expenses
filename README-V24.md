@@ -1,3 +1,7 @@
+# Home Expenses Manager V24.8
+
+See `README-V24.8.md` for the latest changes.
+
 # Current release: v24.7
 
 # Home Expenses Manager V24

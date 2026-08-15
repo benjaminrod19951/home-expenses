@@ -26,3 +26,13 @@
 .cardbutton{color:#172033;background:#fff}.cardbutton span,.cardbutton strong{color:#172033}
 .primary-card{color:#172033}.card-title-line{display:flex;align-items:center;justify-content:space-between;gap:8px}.cardselect{padding:5px 8px;min-width:120px;max-width:180px}.cardvalue{background:transparent;color:#172033;padding:0;justify-content:flex-start;font-size:25px;font-weight:800;width:max-content}.cardvalue:hover{color:#3153b7}.category-manage-list{display:grid;gap:8px;margin-top:12px}.category-manage-row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,300px) 42px;gap:10px;align-items:center;padding:12px;border:1px solid #eef0f4;border-radius:10px}.category-manage-row>div{display:grid;gap:4px}.category-manage-row small{color:#667085}.merchant-insight-list{display:grid;gap:7px;margin-top:10px}.merchant-insight-row{display:grid;grid-template-columns:minmax(0,1fr) 120px 24px;gap:10px;align-items:center;background:#f8fafc;color:#172033;text-align:right;width:100%;padding:11px 12px}.merchant-insight-row span{display:grid;gap:2px}.merchant-insight-row small{color:#667085}.merchant-insight-row strong{direction:ltr;text-align:left}.merchant-history table{min-width:650px}
 @media(max-width:700px){.category-manage-row{grid-template-columns:1fr 42px}.category-manage-row select{grid-column:1/-1;grid-row:2}.card-title-line{align-items:flex-start;flex-direction:column}.cardselect{max-width:100%;width:100%}}
+
+/* V24.8 – one compact data-quality status instead of three noisy banners */
+.data-check-summary{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;border-radius:12px;padding:12px 16px;margin:10px 0 14px;font-weight:800;background:#f8fafc;color:#1e293b;border:1px solid #cbd5e1;cursor:pointer}
+.data-check-summary span{font-weight:500;opacity:.75}
+.data-check-summary.has-issues{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+.data-check-summary.ok{background:#f0fdf4;border-color:#86efac;color:#166534}
+.check-section{padding:16px 0;border-top:1px solid #e5e7eb}
+.check-section:first-of-type{border-top:0}
+.check-section h3{margin:0 0 6px}
+.check-section p{margin:0 0 12px;color:#64748b}
