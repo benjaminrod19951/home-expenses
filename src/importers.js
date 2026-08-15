@@ -145,7 +145,7 @@ function parseCardRows(rows){
     // Keep the first occurrence compatible with V20/V22 external IDs, and append
     // an occurrence suffix only when an identical transaction appears more than once.
     const fingerprint=['card',date,norm(merchant),Math.abs(amount).toFixed(2)].join('|');
-    base.push({fingerprint,date,month:(chargeDate||date).slice(0,7),merchant,amount,category,source:'אשראי',kind:'expense',flow_type:'expense',
+    base.push({fingerprint,date,month:(chargeDate||date).slice(0,7),merchant,amount,category,source:'אשראי',kind:'card_purchase',flow_type:'expense',
       count_as_expense:true,count_as_income:false,payment_method:'אשראי',card_last4:cardLast4||null,charge_date:chargeDate||null,
       notes:noteI>=0?(clean(row[noteI])||null):null,original_amount:originalI>=0?signedMoney(row[originalI]):amount,income_amount:0});
   }
@@ -165,6 +165,23 @@ function decodeHtml(s){
 }
 
 function bankRowsFromHtml(text){
+  // Prefer the browser DOM parser: Leumi exports an HTML document with nested
+  // tables, so regex alone can accidentally flatten a wrapper table. We only
+  // accept a table that contains the real compact 8-column transaction header.
+  try{
+    if(typeof DOMParser!=="undefined"){
+      const doc=new DOMParser().parseFromString(text,"text/html");
+      for(const table of [...doc.querySelectorAll("table")]){
+        const rows=[...table.querySelectorAll(":scope > tbody > tr, :scope > thead > tr, :scope > tr")].map(tr=>
+          [...tr.children].filter(c=>/^(TD|TH)$/.test(c.tagName)).map(c=>clean(c.textContent))
+        ).filter(r=>r.length);
+        if(!rows.some(r=>r.length>=6&&r.length<=10&&r.some(x=>norm(x).includes('תיאור'))&&r.some(x=>norm(x).includes('בחובה'))&&r.some(x=>norm(x).includes('בזכות'))))continue;
+        const parsed=parseBankRows(rows); if(parsed.length)return parsed;
+      }
+    }
+  }catch(_){/* use fallback below */}
+
+  // Fallback for environments without DOMParser.
   const tables=[...text.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/gi)].map(m=>m[0]);
   for(const html of tables){
     const probe=decodeHtml(html);
