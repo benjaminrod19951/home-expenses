@@ -2,83 +2,193 @@ import * as XLSX from 'xlsx';
 
 const clean=s=>String(s??'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
 const norm=s=>clean(s).toLowerCase().replace(/["'`´]/g,'');
-const moneyNumber=v=>{
+const normalizedMerchant=s=>clean(s);
+
+const signedMoney=v=>{
   if(v===null||v===undefined||v==='') return 0;
-  if(typeof v==='number') return Math.abs(v);
-  const s=String(v).replace(/₪|\s/g,'').replace(/,/g,'').replace(/[()]/g,'');
+  if(typeof v==='number') return Number.isFinite(v)?v:0;
+  let s=String(v).replace(/₪|\s/g,'').replace(/,/g,'').trim();
+  const paren=/^\(.*\)$/.test(s); s=s.replace(/[()]/g,'');
   const n=parseFloat(s.replace(/[^0-9.\-]/g,''));
-  return Number.isFinite(n)?Math.abs(n):0;
+  if(!Number.isFinite(n)) return 0;
+  return paren?-Math.abs(n):n;
 };
+const absMoney=v=>Math.abs(signedMoney(v));
+
 function excelDate(v){
   if(v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
-  if(typeof v==='number' && v>30000 && v<60000){const d=XLSX.SSF.parse_date_code(v);return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;}
+  if(typeof v==='number' && v>30000 && v<60000){
+    const d=XLSX.SSF.parse_date_code(v);
+    return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+  }
   const s=clean(v); if(!s)return '';
-  let m=s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/); if(m)return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  let m=s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if(m)return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m=s.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+  if(m)return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
   return s.slice(0,10);
 }
-function findHeader(rows){
-  for(let i=0;i<Math.min(rows.length,80);i++){
-    const r=rows[i].map(norm); const hasDate=r.some(x=>x==='תאריך'||x.includes('תאריך')); const hasDesc=r.some(x=>x.includes('תיאור')||x.includes('פעולה')); const hasDebit=r.some(x=>x.includes('בחובה')||x==='חובה'); const hasCredit=r.some(x=>x.includes('בזכות')||x==='זכות');
-    if(hasDate&&hasDesc&&(hasDebit||hasCredit)) return {index:i,headers:r,raw:rows[i]};
+
+function idx(headers,tests){
+  return headers.findIndex(h=>tests.some(t=>h===t||h.includes(t)));
+}
+
+function classifyBank(desc,direction){
+  const n=norm(desc);
+  const cardPayment=/(לאומי\s*ויזה|לאומי.*ויזה|ישראכרט|מקס\s*(איט|it|פיננ)|כאל|cal\s*(card|כרטיס))/i.test(n);
+  const saving=/(פיקדון|חיסכון|חסכון|משיכת חיסכון|משיכת פיקדון|פירעון פיקדון|פדיון פיקדון|פדיון חיסכון|הקמת פיקדון)/i.test(n);
+  const internal=/(העברה.*בין|העברה עצמית|חשבון שלי|חשבון.*שלי|פייבוקס שלי|paybox שלי|לאומי.*שלי)/i.test(n);
+  const explicitIncome=/(משכורת|שכר עבודה|קצבת|קיצבה|פנסיה|ביטוח לאומי)/i.test(n);
+  if(direction==='out' && cardPayment) return {kind:'card_payment',flow_type:'card_payment',category:'חיוב כרטיס אשראי',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(saving) return {kind:'saving',flow_type:'saving',category:'חיסכון/פיקדון',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(internal) return {kind:'transfer',flow_type:'transfer',category:'העברה',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(direction==='in' && explicitIncome) return {kind:'income',flow_type:'income',category:'הכנסה',count_as_expense:false,count_as_income:true,income_amount:null};
+  if(direction==='in') return {kind:'income_review',flow_type:'income_review',category:'הכנסה לבדיקה',count_as_expense:false,count_as_income:false,income_amount:0};
+  return {kind:'expense',flow_type:'expense',category:'אחר',count_as_expense:true,count_as_income:false,income_amount:0};
+}
+
+function findBankHeader(rows){
+  for(let i=0;i<Math.min(rows.length,100);i++){
+    const r=(rows[i]||[]).map(norm);
+    const hasDate=r.some(x=>x==='תאריך'||x.includes('תאריך'));
+    const hasDesc=r.some(x=>x.includes('תיאור')||x.includes('פעולה'));
+    const hasDebit=r.some(x=>x.includes('בחובה')||x==='חובה');
+    const hasCredit=r.some(x=>x.includes('בזכות')||x==='זכות');
+    if(hasDate&&hasDesc&&hasDebit&&hasCredit) return {index:i,headers:r};
   }
   return null;
 }
-function idx(headers,tests){return headers.findIndex(h=>tests.some(t=>h===t||h.includes(t)));}
-function classifyBank(desc,amount,direction){
-  const n=norm(desc);
-  const cardPayment=/(לאומי\s*ויזה|לאומי.*ויזה|ישראכרט|בנהפ.*ישראכרט|מקס|מקס.*פיננ|ויזה|כאל|cal)/i.test(n);
-  const saving=/(פיקדון|חיסכון|חסכון|משיכת חיסכון|פירעון פיקדון|הקמת פיקדון)/i.test(n);
-  const internal=/(העברה.*בין|העברה עצמית|חשבון שלי|חשבון.*שלי|פייבוקס שלי|לאומי.*שלי)/i.test(n);
-  if(direction==='out' && cardPayment) return {kind:'card_payment',flow_type:'card_payment',category:'חיוב כרטיס אשראי',payment_method:'עו״ש'};
-  if(saving) return {kind:'saving',flow_type:'saving',category:'חיסכון/פיקדון',payment_method:'עו״ש'};
-  if(internal) return {kind:'transfer',flow_type:'transfer',category:'העברה',payment_method:'עו״ש'};
-  if(direction==='in') return {kind:'income',flow_type:'income',category:'הכנסה',payment_method:'עו״ש'};
-  return {kind:'expense',flow_type:'expense',category:'אחר',payment_method:'עו״ש'};
+
+function parseBankRows(rows){
+  const h=findBankHeader(rows); if(!h)return [];
+  const {index,headers}=h;
+  const dateI=idx(headers,['תאריך']);
+  const valueDateI=idx(headers,['תאריך ערך','תאריך הפך']);
+  const descI=idx(headers,['תיאור','פעולה','פרטים']);
+  const refI=idx(headers,['אסמכתא']);
+  const debitI=idx(headers,['בחובה','חובה']);
+  const creditI=idx(headers,['בזכות','זכות']);
+  const balanceI=idx(headers,['יתרה']);
+  const noteI=idx(headers,['הערה']);
+  if([dateI,descI,debitI,creditI].some(i=>i<0))return [];
+  const all=[];
+  for(let r=index+1;r<rows.length;r++){
+    const row=rows[r]||[];
+    const date=excelDate(row[dateI]); if(!/^\d{4}-\d{2}-\d{2}$/.test(date))continue;
+    const debit=absMoney(row[debitI]),credit=absMoney(row[creditI]);
+    if(debit===0&&credit===0)continue;
+    const direction=debit!==0?'out':'in';
+    const amount=direction==='out'?debit:credit;
+    const merchant=clean(row[descI])||'תנועת בנק';
+    const meta=classifyBank(merchant,direction);
+    const ref=refI>=0?clean(row[refI]):'';
+    const valueDate=valueDateI>=0?excelDate(row[valueDateI]):'';
+    const bankBalance=balanceI>=0?signedMoney(row[balanceI]):null;
+    const sourceKey=['bank',date,valueDate||date,norm(merchant),ref,debit.toFixed(2),credit.toFixed(2)].join('|');
+    all.push({
+      date,month:date.slice(0,7),merchant,amount,category:meta.category,source:'עו״ש',kind:meta.kind,flow_type:meta.flow_type,
+      count_as_expense:meta.count_as_expense,count_as_income:meta.count_as_income,payment_method:'עו״ש',card_last4:null,
+      notes:noteI>=0?(clean(row[noteI])||null):null,reference:ref||null,value_date:valueDate||date,balance:bankBalance,
+      bank_description:merchant,bank_direction:direction,bank_debit:debit,bank_credit:credit,bank_value_date:valueDate||date,
+      bank_balance:bankBalance,original_amount:amount,income_amount:meta.kind==='income'?amount:(meta.income_amount??0),source_key:sourceKey,external_id:sourceKey
+    });
+  }
+  return all;
 }
-function importCreditRows(rows,fileName){
-  // Generic credit-card fallback: locate a header containing date + merchant/description + amount.
-  for(let i=0;i<Math.min(rows.length,80);i++){
-    const headers=rows[i].map(norm);
-    const dateI=idx(headers,['תאריך','תאריך עסקה','date']);
-    const descI=idx(headers,['בית עסק','שם בית העסק','בית העסק/תיאור','תיאור','עסק','merchant']);
-    const amountI=idx(headers,['סכום','חיוב','עסקה','amount']);
-    if(dateI<0||descI<0||amountI<0) continue;
-    const out=[];
-    for(let r=i+1;r<rows.length;r++){
-      const row=rows[r]; if(!row?.length) continue;
-      const date=excelDate(row[dateI]); const merchant=clean(row[descI]); const amount=moneyNumber(row[amountI]);
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!merchant||!amount) continue;
-      const sourceKey=['card',date,norm(merchant),amount.toFixed(2)].join('|');
-      out.push({date,month:date.slice(0,7),merchant,amount,category:'אחר',source:'אשראי',kind:'expense',flow_type:'expense',payment_method:'אשראי',card_last4:null,notes:null,original_amount:amount,income_amount:0,external_id:sourceKey});
-    }
-    if(out.length) return out;
+
+function cardHeader(rows){
+  for(let i=0;i<Math.min(rows.length,100);i++){
+    const h=(rows[i]||[]).map(norm);
+    const dateI=idx(h,['תאריך עסקה','תאריך']);
+    const merchantI=idx(h,['שם בית העסק','בית עסק','בית העסק/תיאור','merchant']);
+    const amountI=idx(h,['סכום חיוב','amount']);
+    if(dateI>=0&&merchantI>=0&&amountI>=0)return {index:i,headers:h};
+  }
+  return null;
+}
+
+function parseCardRows(rows){
+  const found=cardHeader(rows); if(!found)return [];
+  const {index,headers}=found;
+  const dateI=idx(headers,['תאריך עסקה','תאריך']);
+  const merchantI=idx(headers,['שם בית העסק','בית עסק','בית העסק/תיאור','merchant']);
+  const catI=idx(headers,['קטגוריה']);
+  const cardI=idx(headers,['4 ספרות אחרונות','4 ספרות']);
+  const amountI=idx(headers,['סכום חיוב','amount']);
+  const chargeI=idx(headers,['תאריך חיוב']);
+  const noteI=idx(headers,['הערות','הערה']);
+  const originalI=idx(headers,['סכום עסקה מקורי']);
+  const base=[];
+  for(let r=index+1;r<rows.length;r++){
+    const row=rows[r]||[];
+    const date=excelDate(row[dateI]);
+    const merchant=clean(row[merchantI]);
+    const amount=signedMoney(row[amountI]);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!merchant||amount===0)continue;
+    const chargeDate=chargeI>=0?excelDate(row[chargeI]):'';
+    const cardLast4=cardI>=0?String(row[cardI]??'').replace(/\D/g,'').slice(-4):'';
+    const category=catI>=0?(clean(row[catI])||'אחר'):'אחר';
+    // Keep the first occurrence compatible with V20/V22 external IDs, and append
+    // an occurrence suffix only when an identical transaction appears more than once.
+    const fingerprint=['card',date,norm(merchant),Math.abs(amount).toFixed(2)].join('|');
+    base.push({fingerprint,date,month:(chargeDate||date).slice(0,7),merchant,amount,category,source:'אשראי',kind:'expense',flow_type:'expense',
+      count_as_expense:true,count_as_income:false,payment_method:'אשראי',card_last4:cardLast4||null,charge_date:chargeDate||null,
+      notes:noteI>=0?(clean(row[noteI])||null):null,original_amount:originalI>=0?signedMoney(row[originalI]):amount,income_amount:0});
+  }
+  const seen=new Map();
+  return base.map(x=>{
+    const n=(seen.get(x.fingerprint)||0)+1; seen.set(x.fingerprint,n);
+    const externalId=n===1?x.fingerprint:`${x.fingerprint}|${n}`;
+    const sourceKey=['card',x.date,x.charge_date||x.date,norm(x.merchant),Math.abs(x.amount).toFixed(2),x.card_last4||'',n].join('|');
+    const {fingerprint,...rest}=x;
+    return {...rest,source_key:sourceKey,external_id:externalId};
+  });
+}
+
+function decodeHtml(s){
+  return String(s??'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&#x27;/gi,"'")
+    .replace(/<br\s*\/?>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function bankRowsFromHtml(text){
+  const tables=[...text.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/gi)].map(m=>m[0]);
+  for(const html of tables){
+    const probe=decodeHtml(html);
+    if(!probe.includes('תיאור')||!probe.includes('בחובה')||!probe.includes('בזכות'))continue;
+    const rows=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>
+      [...m[1].matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(c=>decodeHtml(c[1]))
+    ).filter(r=>r.length);
+    const parsed=parseBankRows(rows); if(parsed.length)return parsed;
   }
   return [];
 }
+
 export async function importXlsx(file){
   const buf=await file.arrayBuffer();
-  let wb;
-  try{wb=XLSX.read(buf,{type:'array',cellDates:true,raw:true});}catch(e){throw new Error('לא ניתן לקרוא את הקובץ: '+e.message)}
-  const all=[];
-  for(const sheet of wb.SheetNames){
-    const ws=wb.Sheets[sheet]; const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
-    const h=findHeader(rows); if(!h) continue;
-    const {index,headers}=h; const dateI=idx(headers,['תאריך']); const valueDateI=idx(headers,['תאריך ערך','תאריך הפך']); const descI=idx(headers,['תיאור','פעולה']); const refI=idx(headers,['אסמכתא']); const debitI=idx(headers,['בחובה','חובה']); const creditI=idx(headers,['בזכות','זכות']); const balanceI=idx(headers,['יתרה']); const noteI=idx(headers,['הערה']);
-    for(let r=index+1;r<rows.length;r++){
-      const row=rows[r]; if(!row||!row.length)continue;
-      const date=excelDate(row[dateI]); if(!/^\d{4}-\d{2}-\d{2}$/.test(date))continue;
-      const debit=moneyNumber(row[debitI]), credit=moneyNumber(row[creditI]); if(debit===0&&credit===0)continue;
-      const direction=debit>0?'out':'in', amount=direction==='out'?debit:credit; const merchant=clean(row[descI])||'תנועת בנק';
-      const meta=classifyBank(merchant,amount,direction); const ref=clean(row[refI]);
-      const sourceKey=['bank',date,excelDate(row[valueDateI]),norm(merchant),ref,debit.toFixed(2),credit.toFixed(2)].join('|');
-      all.push({date,month:date.slice(0,7),merchant,amount,category:meta.category,source:'עו״ש',kind:meta.kind,flow_type:meta.flow_type,payment_method:'עו״ש',card_last4:null,notes:clean(row[noteI])||null,bank_description:merchant,bank_direction:direction,bank_debit:debit,bank_credit:credit,bank_value_date:excelDate(row[valueDateI])||null,bank_balance:moneyNumber(row[balanceI]),original_amount:amount,income_amount:meta.kind==='income'?amount:0,external_id:sourceKey});
+  // Leumi's .xls export is actually HTML. Parse it explicitly before SheetJS.
+  try{
+    const text=new TextDecoder('utf-8').decode(buf);
+    if(/<html|<table/i.test(text)){
+      const bank=bankRowsFromHtml(text); if(bank.length)return bank;
     }
+  }catch(_){/* continue */}
+
+  let wb;
+  try{wb=XLSX.read(buf,{type:'array',cellDates:true,raw:true});}
+  catch(e){throw new Error('לא ניתן לקרוא את הקובץ: '+e.message)}
+
+  const bank=[];
+  for(const sheet of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true});
+    const parsed=parseBankRows(rows); if(parsed.length)bank.push(...parsed);
   }
-  if(all.length) return all;
-  // Not a bank export: try a generic credit-card table.
-  const creditRows=[];
-  for(const sheet of wb.SheetNames){const ws=wb.Sheets[sheet];creditRows.push(...XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true}));}
-  const credit=importCreditRows(creditRows,file.name);
-  if(credit.length) return credit;
-  throw new Error('לא נמצאה טבלת בנק או אשראי. לקובץ בנק נדרשות עמודות תאריך, תיאור, בחובה/בזכות.');
+  if(bank.length)return bank;
+
+  const card=[];
+  for(const sheet of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true});
+    card.push(...parseCardRows(rows));
+  }
+  if(card.length)return card;
+  throw new Error('לא נמצאה טבלת בנק או אשראי מוכרת בקובץ.');
 }
