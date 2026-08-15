@@ -1,6 +1,6 @@
 {
   "name": "home-expenses-manager",
-  "version": "24.5.0",
+  "version": "24.7.0",
   "private": true,
   "type": "module",
   "scripts": {

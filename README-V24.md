@@ -1,3 +1,5 @@
+# Current release: v24.7
+
 # Home Expenses Manager V24
 
 V24 combines the richer category/analytics UI from the older versions with the audited bank/card ledger from V23.

@@ -103,104 +103,112 @@ function App({session}){
  async function saveManual(f){const amount=Math.abs(num(f.amount));if(!amount)return setMsg("צריך להזין סכום");const d=f.date||today();const flow=f.flow_type||"expense";const row={household_id:home.id,user_id:session.user.id,external_id:`manual-${crypto.randomUUID()}`,date:d,month:d.slice(0,7),merchant:f.merchant?.trim()||f.category,amount,category:f.category||"לא מסווג",source:"ידני",kind:flow,flow_type:flow,count_as_expense:flow==="expense",count_as_income:flow==="income",income_amount:flow==="income"?Math.min(num(f.income_amount??amount),amount):0,payment_method:f.payment_method,card_last4:f.card_last4||null,notes:f.notes?.trim()||null,manual_override:true};const{error}=await supabase.from("transactions").insert(row);if(error)setMsg(error.message);else{setModal(null);setMsg("התנועה נוספה");load()}}
  async function updateTransaction(f){const amount=Math.abs(num(f.amount));if(!amount)return setMsg("צריך להזין סכום");const d=f.date||today();const flow=f.flow_type||"expense";const row={date:d,month:d.slice(0,7),merchant:f.merchant?.trim()||f.category,amount,category:f.category||"לא מסווג",payment_method:f.payment_method||"אשראי",card_last4:f.card_last4||null,notes:f.notes?.trim()||null,flow_type:flow,count_as_expense:flow==="expense",count_as_income:flow==="income",income_amount:flow==="income"?Math.min(num(f.income_amount??amount),amount):0,kind:flow,manual_override:true};const{error}=await supabase.from("transactions").update(row).eq("id",f.id);if(error)setMsg(error.message);else{setModal(null);setDetail(null);setMsg("התנועה עודכנה");load()}}
  async function reconcileDirectBankCard(){
-  const{data:all,error}=await supabase.from("transactions").select("id,date,month,merchant,bank_description,bank_direction,amount,source,flow_type,kind,category,count_as_expense,count_as_income,linked_transaction_id,reconciliation_status,manual_override,charge_date,card_last4").eq("household_id",home.id);
+  const{data:all,error}=await supabase.from("transactions").select("id,date,month,merchant,bank_description,bank_direction,amount,source,flow_type,kind,category,count_as_expense,count_as_income,linked_transaction_id,reconciliation_status,manual_override,charge_date,card_last4,reference").eq("household_id",home.id);
   if(error)return false;
-  const rows=all||[], DAY=86400000, day=a=>a?new Date(a+"T12:00:00").getTime():NaN;
+  const rows=all||[], DAY=86400000;
+  const day=a=>a?new Date(a+"T12:00:00").getTime():NaN;
+  const diffDays=(a,b)=>Math.abs(day(a)-day(b))/DAY;
   const provider=x=>{const n=normalizeMerchant(`${x.merchant||""} ${x.bank_description||""}`);if(/לאומי\s*ויזה|לאומי.*ויזה|leumi.*visa/i.test(n))return"leumi_visa";if(/ישראכרט|isracard/i.test(n))return"isracard";if(/מקס\s*(איט|it|פיננ)?|\bmax\b/i.test(n))return"max";if(/כאל|cal\s*(card|כרטיס)/i.test(n))return"cal";return null};
-  const bank=rows.filter(x=>x.source==="עו״ש"&&x.bank_direction!=="in"&&provider(x)&&!x.manual_override);
   const card=rows.filter(x=>x.source==="אשראי"&&!x.manual_override);
+  const positiveCard=card.filter(x=>num(x.amount)>0);
+  const bank=rows.filter(x=>x.source==="עו״ש"&&x.bank_direction!=="in"&&provider(x)&&!x.manual_override);
+  const knownLast4=[...new Set(card.map(x=>String(x.card_last4||"")).filter(x=>/^\d{4}$/.test(x)))];
+  const bankLast4=b=>{const ref=String(b.reference||"").replace(/\D/g,"");return knownLast4.find(x=>ref.endsWith(x))||null};
   let changed=false;
-  const sysCats=new Set(["חיוב כרטיס אשראי","חיוב ישיר שכבר מופיע באשראי","כפילות אשראי","אשראי ישיר / התאמה","אשראי ישיר/חו״ל","אשראי ישיר/לא נמצא בקובץ האשראי"]);
   const update=async(id,payload)=>{const{error:e}=await supabase.from("transactions").update(payload).eq("id",id);if(!e)changed=true;return !e};
+  const same=(a,b,t=.02)=>Math.abs(num(a)-num(b))<t;
 
-  // Card files are the detailed source of truth. Old reconciliation versions may
-  // have disabled some card rows; restore every automatic card row first.
+  // The card file is the source of truth for WHAT was purchased. Calendar analysis
+  // follows the transaction date. charge_date is kept only for bank reconciliation.
   for(const c of card){
-    if(c.count_as_expense!==true||["card_duplicate","card_payment"].includes(String(c.flow_type||c.kind||""))){
-      await update(c.id,{flow_type:"expense",kind:"card_purchase",count_as_expense:true,count_as_income:false,linked_transaction_id:null,reconciliation_status:"card_detail_primary"});
-      c.flow_type="expense";c.kind="card_purchase";c.count_as_expense=true;c.linked_transaction_id=null;c.reconciliation_status="card_detail_primary";
+    const wantedMonth=String(c.date||"").slice(0,7);
+    const payload={flow_type:"expense",count_as_expense:true,count_as_income:false,reconciliation_status:"card_detail_primary"};
+    // Preserve a specific imported card kind when present (card_direct/card_foreign).
+    if(!String(c.kind||"").startsWith("card_"))payload.kind="card_purchase";
+    if(wantedMonth&&c.month!==wantedMonth)payload.month=wantedMonth;
+    if(c.count_as_expense!==true||c.count_as_income===true||["card_duplicate","card_payment"].includes(String(c.flow_type||""))||c.month!==wantedMonth){
+      await update(c.id,payload);Object.assign(c,payload);
     }
   }
 
-  // Start bank-card debits conservatively as expenses. They are removed from the
-  // expense total ONLY after the detailed card file explains them.
+  // A bank debit that looks like a card charge remains an expense until a detailed
+  // card record proves that it is merely settlement. This prevents missing charges.
+  const systemCats=new Set(["חיוב כרטיס אשראי","חיוב ישיר שכבר מופיע באשראי","כפילות אשראי","אשראי ישיר / התאמה"]);
   for(const b of bank){
-    const cat=b.category&&!sysCats.has(b.category)?b.category:"אשראי ישיר/לא נמצא בקובץ האשראי";
+    const cat=b.category&&!systemCats.has(b.category)?b.category:"אשראי - ממתין להתאמה";
     const payload={flow_type:"expense",kind:"expense",category:cat,count_as_expense:true,count_as_income:false,reconciliation_status:"card_bank_unmatched",linked_transaction_id:null};
-    if(b.flow_type!==payload.flow_type||b.count_as_expense!==true||b.reconciliation_status!==payload.reconciliation_status||b.linked_transaction_id){await update(b.id,payload)}
-    Object.assign(b,payload);
+    if(b.flow_type!=="expense"||b.count_as_expense!==true||b.reconciliation_status!=="card_bank_unmatched"||b.linked_transaction_id){await update(b.id,payload);Object.assign(b,payload)}
   }
 
-  const usedBank=new Set(), usedCard=new Set(), cardProvider=new Map();
-  const cardGroups=new Map();
-  // A monthly card statement can contain dozens of transactions for one card but
-  // the bank only shows one debit. Group by last4 + actual charge date and match
-  // the aggregate, even though the bank description does not contain last4.
-  for(const c of card){
-    if(!c.charge_date||!c.card_last4)continue;
-    const k=`${c.card_last4}|${c.charge_date}`;
-    const g=cardGroups.get(k)||{last4:c.card_last4,chargeDate:c.charge_date,sum:0,rows:[]};
-    g.sum+=num(c.amount);g.rows.push(c);cardGroups.set(k,g);
+  const usedBank=new Set(),usedCard=new Set();
+  const providerCards=new Map();
+  // Learn provider/card relationships only from bank references that explicitly end
+  // with a known card number. In the supplied Leumi file, e.g. 368044 -> card 8044.
+  for(const b of bank){const l4=bankLast4(b),p=provider(b);if(l4&&p){if(!providerCards.has(p))providerCards.set(p,new Set());providerCards.get(p).add(l4)}}
+
+  const markMatch=async(b,cards,status)=>{
+    await update(b.id,{flow_type:"card_payment",kind:"card_payment",category:"חיוב כרטיס אשראי",count_as_expense:false,count_as_income:false,reconciliation_status:status,linked_transaction_id:cards.length===1?cards[0].id:null});
+    usedBank.add(b.id);
+    for(const c of cards){
+      await update(c.id,{flow_type:"expense",count_as_expense:true,count_as_income:false,reconciliation_status:"card_detail_reconciled",linked_transaction_id:cards.length===1?b.id:null});
+      usedCard.add(c.id);
+    }
+  };
+
+  // PASS 1 — exact detailed transactions (Direct/foreign charges). We reconcile by
+  // charge date, amount and card number — NEVER by the purchase month/date alone.
+  const smallFirst=[...bank].sort((a,b)=>num(a.amount)-num(b.amount));
+  for(const b of smallFirst){
+    if(usedBank.has(b.id))continue;
+    const l4=bankLast4(b),p=provider(b);
+    let candidates=positiveCard.filter(c=>!usedCard.has(c.id)&&c.charge_date===b.date&&same(c.amount,b.amount));
+    if(l4)candidates=candidates.filter(c=>String(c.card_last4||"")===l4);
+    else{
+      const mappedOther=new Set([...providerCards.entries()].filter(([prov])=>prov!==p).flatMap(([,set])=>[...set]));
+      candidates=candidates.filter(c=>!mappedOther.has(String(c.card_last4||"")));
+    }
+    if(!candidates.length)continue;
+    // Without an explicit card number, only auto-match an unambiguous exact row.
+    if(candidates.length===1)await markMatch(b,[candidates[0]],"card_exact_charge_match");
   }
-  const groupCandidates=[];
+
+  // PASS 2 — monthly/statement settlement. A single bank debit can equal the SUM of
+  // dozens of detailed transactions sharing the same actual charge date + card.
+  // This handles month boundaries naturally: July purchases may settle in August.
   for(const b of bank){
-    for(const g of cardGroups.values()){
-      const dd=Math.abs(day(g.chargeDate)-day(b.date))/DAY;
-      if(dd<=10&&Math.abs(g.sum-num(b.amount))<0.02)groupCandidates.push({b,g,dd});
-    }
-  }
-  groupCandidates.sort((a,z)=>a.dd-z.dd||z.g.rows.length-a.g.rows.length);
-  for(const {b,g} of groupCandidates){
-    if(usedBank.has(b.id)||g.rows.some(c=>usedCard.has(c.id)))continue;
-    const p=provider(b);
-    await update(b.id,{flow_type:"card_payment",kind:"card_payment",category:"חיוב כרטיס אשראי",count_as_expense:false,count_as_income:false,reconciliation_status:"statement_group_matched",linked_transaction_id:g.rows.length===1?g.rows[0].id:null});
-    usedBank.add(b.id);for(const c of g.rows){usedCard.add(c.id);if(c.card_last4)cardProvider.set(c.card_last4,p);await update(c.id,{flow_type:"expense",kind:"card_purchase",count_as_expense:true,count_as_income:false,reconciliation_status:"statement_primary",linked_transaction_id:g.rows.length===1?b.id:null})}
-  }
-
-  // Direct/foreign charges: if a detailed card transaction exists with the same
-  // amount around the bank debit date, keep the CARD row (Google/Spotify/etc.) and
-  // make the generic bank row settlement-only. Never prefer "לאומי ויזה" over a
-  // real merchant description.
-  for(const b of bank.filter(x=>!usedBank.has(x.id))){
-    const p=provider(b);
-    const candidates=card.filter(c=>!usedCard.has(c.id)&&Math.abs(num(c.amount)-num(b.amount))<0.02).map(c=>{
-      const chargeDiff=c.charge_date?Math.abs(day(c.charge_date)-day(b.date))/DAY:999;
-      const txDiff=c.date?Math.abs(day(c.date)-day(b.date))/DAY:999;
-      const mapped=c.card_last4?cardProvider.get(c.card_last4):null;
-      return {c,chargeDiff,txDiff,mapped,score:Math.min(chargeDiff,txDiff+1)};
-    }).filter(x=>x.chargeDiff<=5||x.txDiff<=5).filter(x=>!x.mapped||x.mapped===p).sort((a,z)=>a.score-z.score);
-    if(candidates.length&&(!candidates[1]||candidates[0].score<candidates[1].score||candidates[0].c.card_last4===candidates[1].c.card_last4)){
-      const c=candidates[0].c;
-      await update(b.id,{flow_type:"card_payment",kind:"card_payment",category:"חיוב כרטיס אשראי",count_as_expense:false,count_as_income:false,reconciliation_status:"direct_matched_to_card",linked_transaction_id:c.id});
-      await update(c.id,{flow_type:"expense",kind:"card_purchase",count_as_expense:true,count_as_income:false,reconciliation_status:"direct_primary",linked_transaction_id:b.id});
-      usedBank.add(b.id);usedCard.add(c.id);if(c.card_last4)cardProvider.set(c.card_last4,p);
-    }
-  }
-
-  // Secondary safety net: sometimes the bank splits a provider's settlement into
-  // several debits and there is no one-to-one amount match. If, for a month, the
-  // SUM of the remaining bank-card debits equals the SUM of the remaining detailed
-  // card charges, reconcile the group as a whole. This is the monthly-total logic
-  // requested for Leumi Visa / Isracard, while keeping providers separate.
-  const months=[...new Set(bank.map(b=>b.date?.slice(0,7)).filter(Boolean))];
-  for(const m of months){
-    const providers=[...new Set(bank.filter(b=>b.date?.slice(0,7)===m&&!usedBank.has(b.id)).map(provider).filter(Boolean))];
-    for(const p of providers){
-      const bs=bank.filter(b=>!usedBank.has(b.id)&&b.date?.slice(0,7)===m&&provider(b)===p);
-      if(!bs.length)continue;
-      const providerCount=new Set(bank.filter(b=>b.date?.slice(0,7)===m).map(provider).filter(Boolean)).size;
-      const cs=card.filter(c=>!usedCard.has(c.id)&&(c.charge_date||c.month)?.slice(0,7)===m).filter(c=>{
-        const mapped=c.card_last4?cardProvider.get(c.card_last4):null;
-        return mapped===p||(!mapped&&providerCount===1);
-      });
-      if(!cs.length)continue;
-      const bankSum=bs.reduce((s,x)=>s+num(x.amount),0),cardSum=cs.reduce((s,x)=>s+num(x.amount),0);
-      if(Math.abs(bankSum-cardSum)<0.02){
-        for(const b of bs){await update(b.id,{flow_type:"card_payment",kind:"card_payment",category:"חיוב כרטיס אשראי",count_as_expense:false,count_as_income:false,reconciliation_status:"monthly_provider_matched",linked_transaction_id:null});usedBank.add(b.id)}
-        for(const c of cs){await update(c.id,{flow_type:"expense",kind:"card_purchase",count_as_expense:true,count_as_income:false,reconciliation_status:"monthly_provider_primary",linked_transaction_id:null});usedCard.add(c.id);if(c.card_last4)cardProvider.set(c.card_last4,p)}
+    if(usedBank.has(b.id))continue;
+    const l4=bankLast4(b),p=provider(b);
+    const dates=[b.date];
+    let matches=[];
+    for(const chargeDate of dates){
+      const last4Options=l4?[l4]:[...new Set(card.filter(c=>!usedCard.has(c.id)&&c.charge_date===chargeDate).map(c=>String(c.card_last4||"")).filter(Boolean))];
+      for(const opt of last4Options){
+        if(!l4){
+          const mappedOther=[...providerCards.entries()].some(([prov,set])=>prov!==p&&set.has(opt));
+          if(mappedOther)continue;
+        }
+        const cs=card.filter(c=>!usedCard.has(c.id)&&c.charge_date===chargeDate&&String(c.card_last4||"")===opt);
+        if(cs.length>=1&&same(cs.reduce((sum,c)=>sum+num(c.amount),0),b.amount))matches.push({cs,chargeDate,opt});
       }
     }
+    // Only auto-reconcile a group if the mathematical explanation is unique.
+    if(matches.length===1)await markMatch(b,matches[0].cs,"card_statement_sum_match");
   }
+
+  // PASS 3 — a final conservative exact check after statement rows were removed.
+  // This catches a Direct charge that shared a date with a larger settlement.
+  for(const b of bank){
+    if(usedBank.has(b.id))continue;
+    const l4=bankLast4(b),p=provider(b);
+    let cs=positiveCard.filter(c=>!usedCard.has(c.id)&&c.charge_date&&diffDays(c.charge_date,b.date)<=3&&same(c.amount,b.amount));
+    if(l4)cs=cs.filter(c=>String(c.card_last4||"")===l4);
+    else{
+      const mappedOther=new Set([...providerCards.entries()].filter(([prov])=>prov!==p).flatMap(([,set])=>[...set]));
+      cs=cs.filter(c=>!mappedOther.has(String(c.card_last4||"")));
+    }
+    if(cs.length===1)await markMatch(b,[cs[0]],"card_exact_charge_match");
+  }
+
   return changed;
  }
  async function importFiles(e){try{setMsg("מנתח את הקבצים…");let report=[];for(const f of [...e.target.files]){let rows=await importXlsx(f);if(!rows.length){report.push(`${f.name}: ❌ לא נמצאו תנועות`);continue;}const usedExisting=new Set();rows=rows.map(x=>{const rule=matchingRule(x.merchant);const candidates=tx.filter(t=>!usedExisting.has(t.id)&&t.source===x.source);const existing=candidates.find(t=>(t.source_key&&x.source_key&&t.source_key===x.source_key)||(t.external_id&&x.external_id&&t.external_id===x.external_id)||(t.date===x.date&&normalizeMerchant(t.merchant)===normalizeMerchant(x.merchant)&&Math.abs(num(t.amount)-num(x.amount))<0.005));if(existing)usedExisting.add(existing.id);const manual=existing?.manual_override===true;return {...x,household_id:home.id,user_id:session.user.id,external_id:existing?.external_id||x.external_id,category:manual?existing.category:(rule?.category||x.category||"לא מסווג"),flow_type:manual?existing.flow_type:x.flow_type,kind:manual?existing.kind:x.kind,count_as_expense:manual?existing.count_as_expense:x.count_as_expense,count_as_income:manual?existing.count_as_income:x.count_as_income,income_amount:manual?existing.income_amount:x.income_amount,manual_override:manual};});const sourceExpenseTotal=rows.filter(isExpense).reduce((a,x)=>a+num(x.amount),0);const monthTotals={},monthExpenseTotals={};for(const r of rows){monthTotals[r.month]=(monthTotals[r.month]||0)+num(r.amount);if(isExpense(r))monthExpenseTotals[r.month]=(monthExpenseTotals[r.month]||0)+num(r.amount)}const source=rows[0]?.source||"קובץ";const fileKey=`${source}|${f.name}|${rows.length}|${Object.entries(monthTotals).sort().map(([m,v])=>`${m}:${v.toFixed(2)}`).join("|")}`;let{data:batch}=await supabase.from("import_batches").select("*").eq("household_id",home.id).eq("file_key",fileKey).maybeSingle();if(!batch){const{data:b,error:be}=await supabase.from("import_batches").insert({household_id:home.id,user_id:session.user.id,file_name:f.name,file_key:fileKey,source,source_total:rows.reduce((a,x)=>a+num(x.amount),0),source_expense_total:sourceExpenseTotal,source_expense_count:rows.filter(isExpense).length,row_count:rows.length,month_totals:monthTotals,month_expense_totals:monthExpenseTotals,imported_at:new Date().toISOString()}).select().single();if(be)throw be;batch=b;}rows=rows.map(x=>({...x,import_batch_id:batch.id}));let added=0,updated=0;for(const row of rows){const existing=tx.find(t=>(t.source_key&&row.source_key&&t.source_key===row.source_key)||(t.external_id&&row.external_id&&t.external_id===row.external_id));if(existing){const manual=existing.manual_override===true;const payload=manual?{...row,category:existing.category,flow_type:existing.flow_type,kind:existing.kind,count_as_expense:existing.count_as_expense,count_as_income:existing.count_as_income,income_amount:existing.income_amount,manual_override:true}:{...row,manual_override:false};delete payload.id;const{error}=await supabase.from("transactions").update(payload).eq("id",existing.id);if(error)throw error;updated++;}else{const{error}=await supabase.from("transactions").insert(row);if(error)throw error;added++;}}{const expenseRows=rows.filter(isExpense), incomeRows=rows.filter(isIncome), bankIn=rows.filter(x=>x.source==="עו״ש"&&x.bank_direction==="in"), bankOut=rows.filter(x=>x.source==="עו״ש"&&x.bank_direction==="out");const details=source==="אשראי"?`${rows.length} עסקאות אשראי · הוצאות ${money(expenseRows.reduce((a,x)=>a+num(x.amount),0))}`:`${rows.length} תנועות בנק · ${bankOut.length} חובה ${money(bankOut.reduce((a,x)=>a+num(x.bank_debit||x.amount),0))} · ${bankIn.length} זכות ${money(bankIn.reduce((a,x)=>a+num(x.bank_credit||x.amount),0))}`;report.push(`${f.name}: ${added} חדשות, ${updated} סונכרנו · ${details}`)}}await reconcileDirectBankCard();setMsg(`ייבוא הסתיים. ${report.join(" · ")}`);load()}catch(err){setMsg("שגיאה בייבוא: "+err.message)}finally{e.target.value=""}}
@@ -215,11 +223,12 @@ function App({session}){
  const allCategoryNames=[...new Set([...cats,...expenses.map(catName),...previous.map(catName),...previous2.map(catName),"לא מסווג"])].filter(Boolean);
  const categoryTotals=allCategoryNames.map(c=>{const value=expenses.filter(x=>catName(x)===c).reduce((s,x)=>s+num(x.amount),0),prev1=previous.filter(x=>catName(x)===c).reduce((s,x)=>s+num(x.amount),0),prev2=previous2.filter(x=>catName(x)===c).reduce((s,x)=>s+num(x.amount),0),prev=prev1||prev2,compareMonth=prev1?previousMonth:(prev2?twoMonthsAgo:null);return{name:c,value,prev,compareMonth,share:total?value/total:0}}).sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name,"he"));
  const categoryGrandTotal=categoryTotals.reduce((s,x)=>s+x.value,0);const categoryMismatch=Math.abs(categoryGrandTotal-total)>0.01;
- const monthBatches=[...imports.filter(b=>b.source==="אשראי"&&Object.keys((b.month_totals||{})).includes(active)).reduce((m,b)=>{const k=`${b.source}|${b.file_name}`;const prev=m.get(k);if(!prev||new Date(b.created_at||b.imported_at||0)>new Date(prev.created_at||prev.imported_at||0))m.set(k,b);return m},new Map()).values()];
- const cardMonthBatches=monthBatches.filter(b=>b.source==="אשראי");
- const sourceMonthTotal=cardMonthBatches.reduce((s,b)=>s+num(b.month_expense_totals?.[active]),0);
- const sourceLinkedTotal=cardMonthBatches.reduce((s,b)=>s+tx.filter(x=>x.month===active&&x.import_batch_id===b.id).reduce((a,x)=>a+num(x.original_amount??x.amount),0),0);
- const sourceMismatch=cardMonthBatches.length>0&&Math.abs(sourceMonthTotal-sourceLinkedTotal)>0.01;
+ const activeCardBatchIds=new Set(tx.filter(x=>x.source==="אשראי"&&x.month===active&&x.import_batch_id).map(x=>x.import_batch_id));
+ const cardMonthBatches=imports.filter(b=>b.source==="אשראי"&&activeCardBatchIds.has(b.id));
+ const sourceFileTotal=cardMonthBatches.reduce((s,b)=>s+num(b.source_total),0);
+ const sourceLinkedTotal=cardMonthBatches.reduce((s,b)=>s+tx.filter(x=>x.import_batch_id===b.id&&x.source==="אשראי").reduce((a,x)=>a+num(x.original_amount??x.amount),0),0);
+ const sourceMismatch=cardMonthBatches.length>0&&Math.abs(sourceFileTotal-sourceLinkedTotal)>0.01;
+ const unmatchedCardBank=current.filter(x=>x.source==="עו״ש"&&x.reconciliation_status==="card_bank_unmatched"&&isExpense(x));
  const primaryCategory=categoryRows.find(x=>x.is_primary)?.name||"סופר",primaryRow=categoryTotals.find(x=>x.name===primaryCategory),primaryValue=primaryRow?.value||0,primaryPrev=primaryRow?.prev||0;
  const filteredExpenses=sortRows(expenses.filter(x=>!categoryFilter||catName(x)===categoryFilter).filter(x=>!search||normalizeMerchant(`${x.merchant} ${catName(x)} ${x.notes||""}`).includes(normalizeMerchant(search))).map(x=>({...x,rule:matchingRule(x.merchant)})),sort);
  const comparisonCats=[...new Set([...cats,...tx.map(catName)])].filter(Boolean).map(name=>({name,values:months.map(m=>tx.filter(x=>x.month===m&&isExpense(x)&&catName(x)===name).reduce((s,x)=>s+num(x.amount),0))})).filter(r=>r.values.some(v=>v));
@@ -238,7 +247,7 @@ function App({session}){
  {view==="categories"&&<section className="panel"><div className="sectionhead"><div><h2>🗂️ ניהול קטגוריות</h2><p>אפשר להוסיף, לבחור קטגוריה ראשית ולמחוק קטגוריות מיותרות. אם יש שימוש בקטגוריה, חייבים להעביר אותו לקטגוריה אחרת לפני המחיקה.</p></div><button onClick={addCategory}><Plus/> קטגוריה חדשה</button></div><div className="primary-setting"><label>קטגוריה ראשית בדשבורד <select value={primaryCategory} onChange={e=>savePrimaryCategory(e.target.value)}>{cats.filter(c=>c!=="לא מסווג").map(c=><option key={c}>{c}</option>)}</select></label><small>אפשר לשנות גם ישירות מהכרטיס בדשבורד.</small></div><div className="category-manage-list">{cats.filter(c=>c!=="לא מסווג").map(c=>{const usageTx=tx.filter(x=>catName(x)===c).length,usageRules=rules.filter(x=>x.category===c).length,usagePlans=plans.filter(x=>x.category===c).length,used=usageTx+usageRules+usagePlans+budgets.filter(x=>x.category===c).length;return <div className="category-manage-row" key={c}><div><b>{c}</b><small>{usageTx} תנועות · {usageRules} חוקים · {usagePlans} תכנונים{c===primaryCategory?" · ראשית":""}</small></div>{used>0&&<select value={categoryReplacement[c]||""} onChange={e=>setCategoryReplacement(r=>({...r,[c]:e.target.value}))}><option value="">העבר לפני מחיקה אל…</option>{cats.filter(x=>x!==c).map(x=><option key={x}>{x}</option>)}</select>}<button className="iconbtn danger" title={used>0&&!categoryReplacement[c]?"בחרי קטגוריית יעד קודם":"מחיקת קטגוריה"} onClick={()=>deleteOrMergeCategory(c)} disabled={used>0&&!categoryReplacement[c]}><Trash2/></button></div>})}</div></section>}
  {view==="rules"&&<section className="panel"><div className="sectionhead"><div><h2>🧠 כללי סיווג עסק</h2><p>כלל משפיע על כל החודשים וגם על ייבואים עתידיים. אפשר ליצור כלל מתוך עריכת הוצאה או מבחירת כמה עסקאות.</p></div></div>{rules.length?<div className="ruleslist">{rules.map(r=><div className="rule" key={r.id}><div><b>{r.merchant_label}</b><span>→ {r.category}</span></div><button className="iconbtn danger" onClick={()=>deleteRule(r.id)}><Trash2/></button></div>)}</div>:<div className="empty">עדיין אין חוקים. פתח הוצאה, בחר קטגוריה ולחץ "למד את העסק".</div>}</section>}
  {view==="budgets"&&<section className="panel"><div className="sectionhead"><div><h2>🎯 תקציבים חודשיים</h2><p>הגדר גבול לכל קטגוריה. 80% מסומן כאזהרה ו־100% כחריגה.</p></div></div><div className="primary-setting"><label>קטגוריה ראשית בדשבורד <select value={primaryCategory} onChange={e=>savePrimaryCategory(e.target.value)}>{cats.map(c=><option key={c}>{c}</option>)}</select></label><small>הכרטיס השני בדשבורד יציג את הקטגוריה שתבחרי כאן.</small></div><div className="budgetgrid">{cats.map(c=>{const b=budgets.find(x=>x.category===c),spent=categoryTotals.find(x=>x.name===c)?.value||0,limit=b?num(b.monthly_limit):0,ratio=limit?spent/limit:0;return <div className="budget" key={c}><div className="budgethead"><b>{c}</b><span>{limit?money(spent)+" / "+money(limit):"ללא תקציב"}</span></div>{limit&&<div className="progress"><div className={ratio>=1?"over":ratio>=.8?"near":""} style={{width:`${Math.min(100,ratio*100)}%`}}/></div>}<div className="budgetedit"><input type="number" placeholder="תקציב חודשי" defaultValue={limit||""} onBlur={e=>saveBudget(c,e.target.value)}/>{limit>0&&<span>{Math.round(ratio*100)}%</span>}</div></div>})}</div></section>}
- {view==="month"&&<><section className="cards"><div className="card"><Wallet/><span>הוצאות</span><strong>{money(total)}</strong><small>{prevTotal?pct(total,prevTotal)+` לעומת ${monthLabel(previousMonth)}`:""}</small></div><div className="card primary-card"><ShoppingCart/><div className="card-title-line"><span>קטגוריה ראשית</span><select className="cardselect" value={primaryCategory} onChange={e=>savePrimaryCategory(e.target.value)}>{cats.filter(c=>c!=="לא מסווג").map(c=><option key={c}>{c}</option>)}</select></div><button className="cardvalue" onClick={()=>openCategory(primaryCategory)}>{money(primaryValue)}</button><small>{primaryPrev?`${pct(primaryValue,primaryPrev)} לעומת ${monthLabel(primaryRow?.compareMonth)}`:"לחצי על הסכום לפירוט"}</small></div><button className="card cardbutton" onClick={()=>setDetail({title:`הכנסות · ${monthLabel(active)}`,rows:current.filter(isIncome)})}><Wallet/><span>הכנסות</span><strong>{money(income)}</strong><small>{income?`חיסכון ${money(income-total)}`:"רק הכנסות שאושרו נספרות"}{incomeReview>0?` · לבדיקה ${money(incomeReview)}`:""} · לחצי לפירוט</small></button><div className="card"><ArrowDownUp/><span>מספר הוצאות</span><strong>{expenses.length}</strong><small>מזומן {money(cash)} · אשראי {money(card)} · עו״ש {money(bankExpenses)}</small></div></section><IncomeReviewPanel rows={incomeReviewRows} onEdit={x=>setModal({mode:"edit",transaction:x})}/><section className="grid"><div className="panel category-panel"><div className="sectionhead"><h2>לפי קטגוריה</h2><span className="muted">לחץ לפירוט · {categoryTotals.length} קטגוריות</span></div><div className="category-list">{categoryTotals.map(x=><button className="row categoryrow" key={x.name} onClick={()=>openCategory(x.name)}><span className="categoryname">{x.name}</span><b className="categoryamount">{money(x.value)}</b><span className="categoryshare">{Math.round(x.share*100)}%</span><span className="categorychange">{x.prev?`${pct(x.value,x.prev)} לעומת ${monthLabel(x.compareMonth)}`:""}</span><Eye/></button>)}</div><div className="category-total"><span>סה״כ</span><b>{money(categoryGrandTotal)}</b><span>{total?"100%":"0%"}</span></div></div><div className="panel"><div className="sectionhead"><h2>חיפוש וסינון</h2><button className="secondary smallbtn" onClick={()=>{setSearch("");setCategoryFilter(null)}}><Filter/> נקה</button></div><input className="search" placeholder="חפש עסק, קטגוריה או הערה…" value={search} onChange={e=>setSearch(e.target.value)}/><div className="filters"><button className={!categoryFilter?"chip active":"chip"} onClick={()=>setCategoryFilter(null)}>הכול</button>{categoryTotals.map(x=><button key={x.name} className={categoryFilter===x.name?"chip active":"chip"} onClick={()=>setCategoryFilter(x.name)}>{x.name}</button>)}</div></div></section><section className="panel fulltable"><div className="sectionhead"><div><h2>כל ההוצאות</h2><p>כל העסקאות מוצגות. אפשר לבחור כמה, למיין כל עמודה ולסנן לפי קטגוריה.</p></div><span className="muted">{filteredExpenses.length} · {money(filteredExpenses.reduce((s,x)=>s+num(x.amount),0))}</span></div><div className={`reconcile ${sourceMismatch?"bad":"good"}`}>{cardMonthBatches.length?sourceMismatch?`⚠️ בדיקת קובצי אשראי: בקובצי האשראי נשמרו ${money(sourceMonthTotal)} הוצאות לחודש הזה, אבל העסקאות שנקלטו מהקובץ מסתכמות ב- ${money(sourceLinkedTotal)}. פער: ${money(Math.abs(sourceMonthTotal-sourceLinkedTotal))}.`:`✓ בדיקת קובצי אשראי: ${money(sourceMonthTotal)} בקובץ/י המקור תואם ל-${money(sourceLinkedTotal)} בעסקאות שנקלטו.`:`ℹ️ אין עדיין קובץ אשראי שמור לחודש הזה להשוואת מקור.`}</div><div className="reconcile good">✓ בדיקה פנימית: סכום הקטגוריות ${money(categoryGrandTotal)} = סה״כ ההוצאות במערכת ${money(total)} · פער ${money(Math.abs(categoryGrandTotal-total))}</div><TransactionTable rows={filteredExpenses} selectedIds={selectedIds} setSelectedIds={setSelectedIds} onEdit={x=>setModal({mode:"edit",transaction:x})} sort={sort} onSort={onSort} bulkCategory={bulkCategory} setBulkCategory={setBulkCategory} cats={cats} onBulk={()=>applyBulk([...selectedIds],bulkCategory,clear=>setSelectedIds(clear))} onBulkRule={()=>applyBulkRule([...selectedIds],bulkCategory,clear=>setSelectedIds(clear))}/></section></>}
+ {view==="month"&&<><section className="cards"><div className="card"><Wallet/><span>הוצאות</span><strong>{money(total)}</strong><small>{prevTotal?pct(total,prevTotal)+` לעומת ${monthLabel(previousMonth)}`:""}</small></div><div className="card primary-card"><ShoppingCart/><div className="card-title-line"><span>קטגוריה ראשית</span><select className="cardselect" value={primaryCategory} onChange={e=>savePrimaryCategory(e.target.value)}>{cats.filter(c=>c!=="לא מסווג").map(c=><option key={c}>{c}</option>)}</select></div><button className="cardvalue" onClick={()=>openCategory(primaryCategory)}>{money(primaryValue)}</button><small>{primaryPrev?`${pct(primaryValue,primaryPrev)} לעומת ${monthLabel(primaryRow?.compareMonth)}`:"לחצי על הסכום לפירוט"}</small></div><button className="card cardbutton" onClick={()=>setDetail({title:`הכנסות · ${monthLabel(active)}`,rows:current.filter(isIncome)})}><Wallet/><span>הכנסות</span><strong>{money(income)}</strong><small>{income?`חיסכון ${money(income-total)}`:"רק הכנסות שאושרו נספרות"}{incomeReview>0?` · לבדיקה ${money(incomeReview)}`:""} · לחצי לפירוט</small></button><div className="card"><ArrowDownUp/><span>מספר הוצאות</span><strong>{expenses.length}</strong><small>מזומן {money(cash)} · אשראי {money(card)} · עו״ש {money(bankExpenses)}</small></div></section><IncomeReviewPanel rows={incomeReviewRows} onEdit={x=>setModal({mode:"edit",transaction:x})}/><section className="grid"><div className="panel category-panel"><div className="sectionhead"><h2>לפי קטגוריה</h2><span className="muted">לחץ לפירוט · {categoryTotals.length} קטגוריות</span></div><div className="category-list">{categoryTotals.map(x=><button className="row categoryrow" key={x.name} onClick={()=>openCategory(x.name)}><span className="categoryname">{x.name}</span><b className="categoryamount">{money(x.value)}</b><span className="categoryshare">{Math.round(x.share*100)}%</span><span className="categorychange">{x.prev?`${pct(x.value,x.prev)} לעומת ${monthLabel(x.compareMonth)}`:""}</span><Eye/></button>)}</div><div className="category-total"><span>סה״כ</span><b>{money(categoryGrandTotal)}</b><span>{total?"100%":"0%"}</span></div></div><div className="panel"><div className="sectionhead"><h2>חיפוש וסינון</h2><button className="secondary smallbtn" onClick={()=>{setSearch("");setCategoryFilter(null)}}><Filter/> נקה</button></div><input className="search" placeholder="חפש עסק, קטגוריה או הערה…" value={search} onChange={e=>setSearch(e.target.value)}/><div className="filters"><button className={!categoryFilter?"chip active":"chip"} onClick={()=>setCategoryFilter(null)}>הכול</button>{categoryTotals.map(x=><button key={x.name} className={categoryFilter===x.name?"chip active":"chip"} onClick={()=>setCategoryFilter(x.name)}>{x.name}</button>)}</div></div></section><section className="panel fulltable"><div className="sectionhead"><div><h2>כל ההוצאות</h2><p>כל העסקאות מוצגות. אפשר לבחור כמה, למיין כל עמודה ולסנן לפי קטגוריה.</p></div><span className="muted">{filteredExpenses.length} · {money(filteredExpenses.reduce((s,x)=>s+num(x.amount),0))}</span></div><div className={`reconcile ${sourceMismatch?"bad":"good"}`}>{cardMonthBatches.length?sourceMismatch?`⚠️ בדיקת קובצי אשראי: סך ${cardMonthBatches.length} קובצי המקור הוא ${money(sourceFileTotal)}, אבל כל העסקאות שנקלטו מהם מסתכמות ב-${money(sourceLinkedTotal)}. פער: ${money(Math.abs(sourceFileTotal-sourceLinkedTotal))}.`:`✓ בדיקת קובצי אשראי: ${cardMonthBatches.length} קבצים נקלטו במלואם · ${money(sourceFileTotal)}.`:`ℹ️ אין קובץ אשראי מפורט שמכיל עסקאות של החודש הזה.`}</div>{unmatchedCardBank.length>0&&<div className="reconcile bad">⚠️ {unmatchedCardBank.length} חיובי אשראי בבנק בחודש הזה עדיין ללא קובץ אשראי מפורט תואם ({money(unmatchedCardBank.reduce((s,x)=>s+num(x.amount),0))}). הם נספרים כרגע כהוצאה כדי שלא יחסר כסף; כשיעלה קובץ האשראי המתאים הם ינוטרלו אוטומטית.</div>}<div className="reconcile good">✓ בדיקה פנימית: סכום הקטגוריות ${money(categoryGrandTotal)} = סה״כ ההוצאות במערכת ${money(total)} · פער ${money(Math.abs(categoryGrandTotal-total))}</div><TransactionTable rows={filteredExpenses} selectedIds={selectedIds} setSelectedIds={setSelectedIds} onEdit={x=>setModal({mode:"edit",transaction:x})} sort={sort} onSort={onSort} bulkCategory={bulkCategory} setBulkCategory={setBulkCategory} cats={cats} onBulk={()=>applyBulk([...selectedIds],bulkCategory,clear=>setSelectedIds(clear))} onBulkRule={()=>applyBulkRule([...selectedIds],bulkCategory,clear=>setSelectedIds(clear))}/></section></>}
  {merchantDetail&&(()=>{const rows=tx.filter(x=>isExpense(x)&&merchantKey(x.merchant)===merchantDetail);const byMonth=[...rows.reduce((m,x)=>{const a=m.get(x.month)||{month:x.month,count:0,sum:0};a.count++;a.sum+=num(x.amount);m.set(x.month,a);return m},new Map()).values()].sort((a,b)=>String(b.month).localeCompare(String(a.month)));return <div className="overlay"><div className="modal wide"><div className="modalhead"><div><h2>{merchantDetail} · היסטוריה</h2><p className="muted">השוואה בין חודשים: סכום כולל מול מספר עסקאות.</p></div><button className="x" onClick={()=>setMerchantDetail(null)}><X/></button></div><div className="tablewrap compact merchant-history"><table><thead><tr><th>חודש</th><th>מספר עסקאות</th><th>סה״כ</th><th>ממוצע לעסקה</th><th></th></tr></thead><tbody>{byMonth.map(r=><tr key={r.month}><td>{monthLabel(r.month)}</td><td>{r.count}</td><td className="amountcell">{money(r.sum)}</td><td className="amountcell">{money(r.sum/r.count)}</td><td><button className="secondary smallbtn" onClick={()=>{setMerchantDetail(null);setDetail({title:`${merchantDetail} · ${monthLabel(r.month)}`,rows:rows.filter(x=>x.month===r.month)})}}>פירוט</button></td></tr>)}</tbody></table></div></div></div>})()} {planModal&&<PlanModal cats={cats} initial={planModal.id?planModal:null} onClose={()=>setPlanModal(null)} onSave={savePlan}/>} {modal&&<ExpenseModal cats={cats} initial={modal.mode==="edit"?modal.transaction:null} onClose={()=>setModal(null)} onSave={modal.mode==="edit"?updateTransaction:saveManual} onAddCategory={addCategory} onApplyRule={(t,c)=>createMerchantRule(t,c)}/>} {detail&&<TransactionDetails title={detail.title} rows={detail.rows} cats={cats} onClose={()=>setDetail(null)} onEdit={x=>{setDetail(null);setModal({mode:"edit",transaction:x})}} onBulk={(ids,cat,clear)=>applyBulk(ids,cat,clear)} onBulkRule={(ids,cat,clear)=>applyBulkRule(ids,cat,clear)}/>}</div>}
 
 function Root(){const[session,setSession]=useState(undefined);useEffect(()=>{if(!supabase)return;supabase.auth.getSession().then(({data})=>setSession(data.session));const{data:{subscription}}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s));return()=>subscription.unsubscribe()},[]);if(supabaseConfigError)return <main className="auth"><div className="authbox"><h1>🏠 הוצאות הבית</h1><div className="notice">{supabaseConfigError}</div></div></main>;if(session===undefined)return <div className="loading">טוען…</div>;return session?<App session={session}/>:<Auth/>}

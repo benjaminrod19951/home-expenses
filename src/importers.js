@@ -121,8 +121,9 @@ function cardHeader(rows){
   return null;
 }
 
-function parseCardRows(rows){
+function parseCardRows(rows,sheetName=""){
   const found=cardHeader(rows); if(!found)return [];
+  const sheetKind=/חיוב מיידי/.test(sheetName)?'card_direct':(/חו\"ל|מט\"ח/.test(sheetName)?'card_foreign':'card_purchase');
   const {index,headers}=found;
   const dateI=idx(headers,['תאריך עסקה','תאריך']);
   const merchantI=idx(headers,['שם בית העסק','בית עסק','בית העסק/תיאור','merchant']);
@@ -145,7 +146,7 @@ function parseCardRows(rows){
     // Keep the first occurrence compatible with V20/V22 external IDs, and append
     // an occurrence suffix only when an identical transaction appears more than once.
     const fingerprint=['card',date,norm(merchant),Math.abs(amount).toFixed(2)].join('|');
-    base.push({fingerprint,date,month:(chargeDate||date).slice(0,7),merchant,amount,category,source:'אשראי',kind:'card_purchase',flow_type:'expense',
+    base.push({fingerprint,date,month:date.slice(0,7),merchant,amount,category,source:'אשראי',kind:sheetKind,flow_type:'expense',
       count_as_expense:true,count_as_income:false,payment_method:'אשראי',card_last4:cardLast4||null,charge_date:chargeDate||null,
       notes:noteI>=0?(clean(row[noteI])||null):null,original_amount:originalI>=0?signedMoney(row[originalI]):amount,income_amount:0});
   }
@@ -218,7 +219,7 @@ export async function importXlsx(file){
   const card=[];
   for(const sheet of wb.SheetNames){
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true});
-    card.push(...parseCardRows(rows));
+    card.push(...parseCardRows(rows,sheet));
   }
   if(card.length)return card;
   throw new Error('לא נמצאה טבלת בנק או אשראי מוכרת בקובץ.');
