@@ -38,12 +38,16 @@ function classifyBank(desc,direction){
   const cardPayment=/(לאומי\s*ויזה|לאומי.*ויזה|ישראכרט|מקס\s*(איט|it|פיננ)|כאל|cal\s*(card|כרטיס))/i.test(n);
   const saving=/(פיקדון|חיסכון|חסכון|משיכת חיסכון|משיכת פיקדון|פירעון פיקדון|פדיון פיקדון|פדיון חיסכון|הקמת פיקדון)/i.test(n);
   const internal=/(העברה.*בין|העברה עצמית|חשבון שלי|חשבון.*שלי|פייבוקס שלי|paybox שלי|לאומי.*שלי)/i.test(n);
+  const possibleOwnLeumi=/(בנק לאומי|לאומי לישראל|leumi)/i.test(n);
   const explicitIncome=/(משכורת|שכר עבודה|קצבת|קיצבה|פנסיה|ביטוח לאומי)/i.test(n);
   if(direction==='out' && cardPayment) return {kind:'card_payment',flow_type:'card_payment',category:'חיוב כרטיס אשראי',count_as_expense:false,count_as_income:false,income_amount:0};
   if(saving) return {kind:'saving',flow_type:'saving',category:'חיסכון/פיקדון',count_as_expense:false,count_as_income:false,income_amount:0};
   if(internal) return {kind:'transfer',flow_type:'transfer',category:'העברה',count_as_expense:false,count_as_income:false,income_amount:0};
   if(direction==='in' && explicitIncome) return {kind:'income',flow_type:'income',category:'הכנסה',count_as_expense:false,count_as_income:true,income_amount:null};
-  if(direction==='in') return {kind:'income_review',flow_type:'income_review',category:'הכנסה לבדיקה',count_as_expense:false,count_as_income:false,income_amount:0};
+  // Most incoming bank credits are real income for this household. Only likely
+  // self-transfers from Leumi stay in review until the user confirms the source.
+  if(direction==='in' && possibleOwnLeumi) return {kind:'income_review',flow_type:'income_review',category:'הכנסה לבדיקה',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(direction==='in') return {kind:'income',flow_type:'income',category:'הכנסה',count_as_expense:false,count_as_income:true,income_amount:null};
   return {kind:'expense',flow_type:'expense',category:'אחר',count_as_expense:true,count_as_income:false,income_amount:0};
 }
 
@@ -68,7 +72,7 @@ function parseBankRows(rows){
   const refI=idx(headers,['אסמכתא']);
   const debitI=idx(headers,['בחובה','חובה']);
   const creditI=idx(headers,['בזכות','זכות']);
-  const balanceI=idx(headers,['יתרה']);
+  const balanceI=headers.findIndex(h=>h==='יתרה');
   const noteI=idx(headers,['הערה']);
   if([dateI,descI,debitI,creditI].some(i=>i<0))return [];
   const all=[];
