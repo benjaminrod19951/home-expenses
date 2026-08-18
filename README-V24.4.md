@@ -1,15 +1,10 @@
-# Home Expenses Manager v24.2
+# Home Expenses Manager V24.4
 
-גרסת clean re-import לאחר בעיית קריאת קובץ הבנק.
+V24.4 changes direct-card reconciliation so the most informative record wins.
 
-## סדר עבודה מומלץ
-1. ב-Supabase SQL Editor להריץ `supabase/v24_2_clean_reimport.sql` פעם אחת.
-2. לוודא שבתוצאת הבדיקה בסוף מופיע `0` עבור `transactions` ו-`import_batches`.
-3. להעלות את תוכן הפרויקט ל-GitHub; Vercel יבנה מחדש אוטומטית.
-4. באפליקציה לייבא קודם את כל קובצי האשראי המקוריים.
-5. לבדוק שסיכום הייבוא נראה הגיוני.
-6. לאחר מכן לייבא את קובץ הבנק המקורי.
+- If a bank debit matches exactly one card transaction by amount and nearby date, the **card transaction remains the counted expense**. Its merchant and category stay visible.
+- The matching bank row becomes `card_payment`, is linked to the card row, and is not counted again.
+- If there is no safe card match, the bank debit stays a real expense so foreign/direct charges are never silently lost.
+- The migration repairs V24.3 rows that used the opposite ownership rule.
 
-האיפוס אינו מוחק קטגוריות, כללי בתי עסק, תקציבים או תכנון עתידי. לפני המחיקה נוצרים גיבויים בטבלאות `transactions_backup_v242` ו-`import_batches_backup_v242`.
-
-v24.2 מחזקת את קריאת קובץ ה-HTML של לאומי כדי לבחור רק את טבלת 8 העמודות האמיתית, ולא wrapper שמכיל את הטבלה כטקסט שטוח. לאחר כל ייבוא מוצג סיכום של מספר הרשומות והסכומים שנקלטו.
+Run `supabase/v24_4_upgrade.sql` once, then deploy this project to GitHub/Vercel.
