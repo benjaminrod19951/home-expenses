@@ -50,3 +50,6 @@
 .clickable-row:hover{background:rgba(37,99,235,.045)}
 .linklike{background:none!important;border:0!important;color:inherit!important;padding:0!important;font:inherit!important;font-weight:700!important;cursor:pointer;text-decoration:underline;text-decoration-color:transparent}
 .linklike:hover{text-decoration-color:currentColor}
+
+/* V24.12 – voice fallback/status */
+.voice-support-note{padding:10px 12px;border-radius:10px;background:#f5f7fb;color:#475467;border:1px solid #e4e7ec;font-size:14px}
