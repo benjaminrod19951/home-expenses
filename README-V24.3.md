@@ -1,12 +1,22 @@
-# Home Expenses Manager V24.3
-
-## Changes
-- Fixes Visa Direct / immediate card expenses: bank row owns a direct expense; duplicated card row is excluded.
-- Monthly card statement is excluded only when it matches the aggregate card purchases for the charge date.
-- Unmatched bank card debit stays an expense instead of disappearing.
-- Selectable primary dashboard category (Settings are under Budgets).
-- Category comparison automatically falls back two months when previous month is zero (useful for bi-monthly utilities).
-- Income cards are clickable and open the month's income transaction table.
-- Import integrity check now verifies raw file rows independently of cross-source de-duplication.
-
-Run `supabase/v24_3_upgrade.sql` before deploying the app.
+{
+  "name": "home-expenses-manager",
+  "version": "24.15.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.4.3"
+  }
+}

@@ -1,22 +1,11 @@
-{
-  "name": "home-expenses-manager",
-  "version": "24.15.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.57.4",
-    "lucide-react": "^0.468.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.4.3"
-  }
-}
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#172033">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>הוצאות הבית</title>
+</head>
+<body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
+</html>
