@@ -21,6 +21,7 @@ const merchantKey=s=>{const n=normalizeMerchant(s);if(!n)return "";const aliases
 const catName=x=>x?.category||"לא מסווג";
 const isPeriodicUtility=x=>{const n=normalizeMerchant(`${x?.merchant||""} ${x?.category||""}`);return /(חברת החשמל|חשמל לישראל|הגיחון|גיחון|סופר ?פאוור.*גז|סופרגז|פזגז|אמישראגז|צריכת מים|חשבון מים)/i.test(n);};
 const periodicWindowAverage=(rows,month,category)=>{const m0=month,m1=monthOffset(month,-1);return rows.filter(x=>isExpense(x)&&isPeriodicUtility(x)&&catName(x)===category&&[m0,m1].includes(x.month)).reduce((s,x)=>s+num(x.amount),0)/2;};
+function sortRows(rows,sort){const a=[...(rows||[])];if(!sort?.key)return a;const k=sort.key;return a.sort((x,y)=>{let av=x?.[k],bv=y?.[k];if(k==="amount"){av=num(av);bv=num(bv)}else{av=String(av??"").toLocaleLowerCase("he");bv=String(bv??"").toLocaleLowerCase("he")}if(av<bv)return sort.dir==="asc"?-1:1;if(av>bv)return sort.dir==="asc"?1:-1;return 0})}
 
 const dateOffset=days=>{const d=new Date();d.setDate(d.getDate()+days);return d.toISOString().slice(0,10)};
 const HEB_UNITS={"אפס":0,"אחד":1,"אחת":1,"שניים":2,"שתיים":2,"שני":2,"שתי":2,"שלושה":3,"שלוש":3,"ארבעה":4,"ארבע":4,"חמישה":5,"חמש":5,"שישה":6,"שש":6,"שבעה":7,"שבע":7,"שמונה":8,"תשעה":9,"תשע":9,"עשרה":10,"עשר":10,"אחד עשר":11,"אחת עשרה":11,"שנים עשר":12,"שתים עשרה":12,"עשרים":20,"שלושים":30,"ארבעים":40,"חמישים":50,"שישים":60,"שבעים":70,"שמונים":80,"תשעים":90};
