@@ -21,11 +21,11 @@ export default async function handler(req, res) {
     const form = new FormData();
     const ext = extensionFor(mimeType);
     form.append("file", new Blob([buffer], { type: mimeType }), `recording.${ext}`);
-    form.append("model", "whisper-large-v3-turbo");
+    form.append("model", "whisper-large-v3");
     form.append("language", "he");
     form.append("temperature", "0");
     form.append("response_format", "json");
-    form.append("prompt", "תמלול בעברית של הוצאות והכנסות כספיות. שמור מספרים, שמות עסקים, תאריכים ומילים כמו קטגוריה, מזומן, ביט, אשראי והעברה.");
+    form.append("prompt", "תמלול מדויק בעברית של רשימת הוצאות והכנסות. שמור כל סכום ומספר בדיוק כפי שנאמר, שמות עסקים ומוצרים, ומילות קטגוריה. דוגמאות לאוצר מילים: סופר, בעלי חיים, טמבור, תינוק, מזון וצריכה, מזומן, ביט, אשראי, העברה, הכנסה, הוצאה, היום, אתמול, שלשום. אל תשכתב סכומים ואל תסכם את המשפט.");
 
     const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",

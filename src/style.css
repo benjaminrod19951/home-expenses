@@ -62,3 +62,6 @@
 .workspace-switch .smallbtn{padding:7px 10px;white-space:nowrap}
 .danger-action{border-color:#e7a5a5!important;color:#a11!important;background:#fff7f7!important;margin-top:8px}
 @media(max-width:720px){.workspace-switch select{min-width:145px;max-width:210px}.workspace-head{min-width:0}.workspace-switch{width:100%}}
+
+/* V24.20 – transcript-first voice workflow */
+.quick-transcript-label{display:block;margin-top:2px}.quick-notice{padding:10px 12px;border-radius:10px;background:#eef8ff;color:#17466f;border:1px solid #cde8f7}.quick-input textarea{direction:rtl;text-align:right}
