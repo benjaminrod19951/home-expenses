@@ -29,5 +29,7 @@ export const supabase = supabaseConfigError
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        storage: typeof window !== "undefined" ? window.localStorage : undefined,
+        storageKey: "home-expenses-auth-v1",
       },
     });
