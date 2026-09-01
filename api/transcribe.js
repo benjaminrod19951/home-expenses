@@ -12,7 +12,7 @@ export default async function handler(req, res) {
   const key = process.env.GROQ_API_KEY;
   if (!key) return res.status(503).json({ error: "GROQ_API_KEY לא מוגדר ב-Vercel" });
   try {
-    const { audio, mimeType = "audio/webm" } = req.body || {};
+    const { audio, mimeType = "audio/webm", vocabulary = [] } = req.body || {};
     if (!audio || typeof audio !== "string") return res.status(400).json({ error: "לא התקבלה הקלטה" });
     const buffer = Buffer.from(audio, "base64");
     if (!buffer.length) return res.status(400).json({ error: "ההקלטה ריקה" });
@@ -25,7 +25,8 @@ export default async function handler(req, res) {
     form.append("language", "he");
     form.append("temperature", "0");
     form.append("response_format", "json");
-    form.append("prompt", "תמלול מילולי ומדויק בעברית של רשימת הוצאות והכנסות. חשוב במיוחד: העתק כל מספר וסכום ספרה-בספרה בדיוק כפי שנאמר; אל תוסיף אפס ואל תסיר אפס. שמור שמות מוצרים, עסקים ומילות קטגוריה בדיוק ככל האפשר. דוגמאות לאוצר מילים: סופר, בעלי חיים, טמבור, תינוק, מזון וצריכה, מזומן, ביט, אשראי, העברה, הכנסה, הוצאה, היום, אתמול, שלשום. אל תשכתב סכומים ואל תסכם את המשפט.");
+    const vocab = Array.isArray(vocabulary) ? vocabulary.map(x=>String(x||"").trim()).filter(Boolean).slice(0,180) : [];
+    form.append("prompt", `תמלול מילולי ומדויק בעברית של רשימת הוצאות והכנסות. חשוב במיוחד: העתק כל מספר וסכום ספרה-בספרה בדיוק כפי שנאמר; אל תוסיף אפס ואל תסיר אפס. שמור שמות מוצרים, עסקים ומילות קטגוריה בדיוק ככל האפשר. אם נאמרה מילה שנמצאת באוצר המילים, העדף את הכתיב הזה. אל תשכתב סכומים ואל תסכם את המשפט. אוצר מילים אישי: ${vocab.join(", ")}`);
 
     const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",
