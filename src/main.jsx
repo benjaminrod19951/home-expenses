@@ -38,66 +38,7 @@ function quickEntryType(part){return /(?:^|\s)(?:הכנסה|הכנסות|קיב�
 function parseQuickEntries(text,cats,rules,history=[]){return splitQuickSpeech(text).map((part,i)=>{const amount=amountFromSpeech(part);if(!amount)return null;const type=quickEntryType(part);const payment=/מזומן/.test(part)?"מזומן":/ביט/.test(part)?"ביט":/אשראי/.test(part)?"אשראי":/העברה/.test(part)?"העברה":type==="income"?"העברה":"מזומן";const date=/שלשום/.test(part)?dateOffset(-2):/אתמול/.test(part)?dateOffset(-1):today();const merchant=quickMerchant(part,cats);const category=quickCategory(part,cats,rules,history);return{_key:`q-${Date.now()}-${i}`,type,date,amount,category,merchant,payment_method:payment,notes:`הזנה מהירה: ${part}`}}).filter(Boolean)}
 
 
-function authErrorText(error){
- const raw=String(error?.message||error||"שגיאה לא ידועה");
- const code=String(error?.code||error?.status||"").trim();
- if(/invalid login credentials/i.test(raw))return "האימייל או הסיסמה אינם תואמים לחשבון. אם הסיסמה בטוחה נכונה, נסי איפוס סיסמה.";
- if(/email not confirmed/i.test(raw))return "כתובת האימייל עדיין לא אושרה. בדקי את הודעת האישור שנשלחה בעת ההרשמה.";
- if(/rate|limit|security purposes/i.test(raw))return "בוצעו יותר מדי ניסיונות בזמן קצר. המתיני מעט ונסי שוב.";
- if(/failed to fetch|network|load failed/i.test(raw))return "לא הצלחנו להגיע ל-Supabase. בדקי חיבור אינטרנט/חסימת דפדפן ונסי שוב.";
- return `שגיאת התחברות: ${raw}${code?` (${code})`:""}`;
-}
-
-function Auth({onAuthenticated}){
- const[email,setEmail]=useState(""),[password,setPassword]=useState(""),[signup,setSignup]=useState(false),[msg,setMsg]=useState(""),[busy,setBusy]=useState(false),[resetMode,setResetMode]=useState(false);
- async function submit(){
-  const address=email.trim();
-  if(!address||!password)return setMsg("הכניסי אימייל וסיסמה");
-  setBusy(true);setMsg(signup?"יוצר חשבון…":"מתחבר…");
-  try{
-   if(!signup){
-    // A broken/stale refresh token in localStorage must never block a fresh
-    // email+password login. Clear only the local auth state, then authenticate.
-    try{await supabase.auth.signOut({scope:"local"})}catch{}
-   }
-   const r=signup
-    ? await supabase.auth.signUp({email:address,password})
-    : await supabase.auth.signInWithPassword({email:address,password});
-   if(r.error)throw r.error;
-   if(signup){
-    if(r.data?.session)onAuthenticated?.(r.data.session);
-    else setMsg("ההרשמה התקבלה. אם נדרש אישור אימייל, בדקי את תיבת הדואר.");
-   }else if(r.data?.session){
-    setMsg("התחברת בהצלחה.");
-    onAuthenticated?.(r.data.session);
-   }else{
-    setMsg("Supabase אישר את הבקשה אך לא החזיר session. נסי שוב.");
-   }
-  }catch(err){
-   console.error("Login failed",err);
-   setMsg(authErrorText(err));
-  }finally{setBusy(false)}
- }
- async function forgotPassword(){
-  const address=email.trim();
-  if(!address){setResetMode(true);return setMsg("הכניסי את כתובת האימייל של החשבון ואז לחצי שליחת קישור.")}
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address))return setMsg("כתובת האימייל אינה תקינה.");
-  setBusy(true);setMsg("שולח קישור איפוס…");
-  try{
-   const redirectTo=`${window.location.origin}/`;
-   const{error}=await supabase.auth.resetPasswordForEmail(address,{redirectTo});
-   if(error)throw error;
-   setMsg(`בקשת האיפוס התקבלה עבור ${address}. בדקי דואר נכנס, ספאם וקידומי מכירות.`);
-  }catch(err){
-   const raw=String(err?.message||err||"");
-   console.error("Password reset failed",err);
-   if(/rate|limit|security purposes/i.test(raw))setMsg("נשלחו יותר מדי בקשות בזמן קצר. המתיני מעט ונסי שוב.");
-   else if(/redirect|url/i.test(raw))setMsg("Supabase חסם את כתובת החזרה. יש להוסיף את כתובת האתר ב-Authentication → URL Configuration → Redirect URLs.");
-   else setMsg(`שליחת האיפוס נכשלה: ${raw||"שגיאה לא ידועה"}`);
-  }finally{setBusy(false)}
- }
- return <main className="auth"><div className="authbox"><h1>🏠 הוצאות הבית</h1><p>ניהול משותף של ההוצאות שלכם</p><input dir="ltr" autoComplete="email" placeholder="אימייל" value={email} onChange={e=>setEmail(e.target.value)}/>{!resetMode&&<input dir="ltr" autoComplete={signup?"new-password":"current-password"} type="password" placeholder="סיסמה" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!busy&&submit()}/>} {resetMode?<><button disabled={busy} onClick={forgotPassword}>{busy?"שולח…":"שליחת קישור לאיפוס סיסמה"}</button><button className="link" disabled={busy} onClick={()=>{setResetMode(false);setMsg("")}}>חזרה לכניסה</button></>:<><button disabled={busy} onClick={submit}>{busy?"רגע…":signup?"הרשמה":"כניסה"}</button>{!signup&&<><div className="auth-persist">✓ החיבור נשמר במכשיר הזה עד שתבחרי יציאה</div><button className="link" disabled={busy} onClick={()=>{setResetMode(true);setMsg("")}}>שכחתי סיסמה</button></>}<button className="link" disabled={busy} onClick={()=>{setSignup(!signup);setMsg("")}}>{signup?"כבר יש חשבון? כניסה":"אין לך חשבון? הרשמה"}</button></>}{msg&&<div className="notice">{msg}</div>}</div></main>
-}
+function Auth(){const[email,setEmail]=useState(""),[password,setPassword]=useState(""),[signup,setSignup]=useState(false),[msg,setMsg]=useState(""),[busy,setBusy]=useState(false);async function submit(){if(supabaseConfigError)return setMsg(supabaseConfigError);setBusy(true);const r=signup?await supabase.auth.signUp({email:email.trim(),password}):await supabase.auth.signInWithPassword({email:email.trim(),password});setBusy(false);if(r.error)setMsg(r.error.message);else if(signup)setMsg("נשלח אימייל לאישור החשבון.");}async function forgot(){const address=email.trim();if(!address)return setMsg("הכניסי קודם את כתובת האימייל של החשבון.");setBusy(true);const{error}=await supabase.auth.resetPasswordForEmail(address,{redirectTo:`${window.location.origin}${window.location.pathname}`});setBusy(false);if(error)setMsg(error.message);else setMsg("נשלח קישור לאיפוס הסיסמה. בדקי גם ספאם וקידומי מכירות.");}return <main className="auth"><div className="authbox"><h1>🏠 הוצאות הבית</h1><p>ניהול משותף של ההוצאות שלכם</p><input dir="ltr" placeholder="אימייל" value={email} onChange={e=>setEmail(e.target.value)}/><input dir="ltr" type="password" placeholder="סיסמה" value={password} onChange={e=>setPassword(e.target.value)}/><button disabled={busy} onClick={submit}>{busy?"רגע…":signup?"הרשמה":"כניסה"}</button>{!signup&&<button className="link" disabled={busy} onClick={forgot}>שכחתי סיסמה</button>}<button className="link" disabled={busy} onClick={()=>setSignup(!signup)}>{signup?"כבר יש חשבון? כניסה":"אין לך חשבון? הרשמה"}</button>{msg&&<div className="notice">{msg}</div>}</div></main>}
 function ExpenseModal({cats,initial,onClose,onSave,onDelete,onAddCategory,onApplyRule}){const[f,setF]=useState(initial||{date:today(),amount:"",category:"סופר",merchant:"",payment_method:"מזומן",card_last4:"",notes:"",flow_type:"expense",count_as_expense:true,count_as_income:false,income_amount:0});const flow=f.flow_type||((f.count_as_income||f.kind==="income")?"income":(f.kind==="transfer"?"transfer":"expense"));const set=(k,v)=>setF({...f,[k]:v});const canDelete=Boolean(initial&&(initial.source==="ידני"||String(initial.external_id||"").startsWith("manual-")));return <div className="overlay"><div className="modal"><div className="modalhead"><h2>{initial?"✏️ עריכת תנועה":"➕ הוצאה ידנית"}</h2><button className="x" onClick={onClose}><X/></button></div><label>סוג תנועה<select value={flow} onChange={e=>{const v=e.target.value;setF({...f,flow_type:v,count_as_expense:v==="expense",count_as_income:v==="income",income_amount:v==="income"?num(f.income_amount||f.amount):0})}}><option value="expense">הוצאה</option><option value="income">הכנסה</option><option value="transfer">העברה / תנועה פנימית</option><option value="card_payment">תשלום כרטיס אשראי (לא הוצאה נוספת)</option><option value="income_review">הכנסה לבדיקה</option><option value="saving">חיסכון / פיקדון</option></select></label><label>סכום<input autoFocus type="number" inputMode="decimal" value={f.amount} onChange={e=>set("amount",e.target.value)}/></label>{["income","saving"].includes(flow)&&<label>{flow==="saving"?"מתוך הסכום שחזר, כמה הוא רווח אמיתי?":"מתוך הסכום, כמה נחשב הכנסה אמיתית?"}<input type="number" inputMode="decimal" value={f.income_amount??(flow==="income"?f.amount:0)} onChange={e=>set("income_amount",e.target.value)}/><small>{flow==="saving"?"לדוגמה: הופקדו בעבר 50,000 ₪ וחזרו 52,000 ₪ — הזן 2,000 ₪. הקרן נשארת תנועה פנימית ורק הרווח נספר כהכנסה.":"לדוגמה: פירעון פיקדון — הקרן אינה הכנסה; הזן כאן רק את הריבית/הרווח."}</small></label>}<label>קטגוריה<div className="inline"><select value={f.category||"לא מסווג"} onChange={e=>set("category",e.target.value)}>{cats.map(c=><option key={c}>{c}</option>)}<option>לא מסווג</option></select><button type="button" onClick={onAddCategory}>+ חדשה</button></div></label><label>בית עסק / תיאור<input value={f.merchant||""} onChange={e=>set("merchant",e.target.value)}/></label><label>אמצעי תשלום<select value={f.payment_method||"אשראי"} onChange={e=>set("payment_method",e.target.value)}><option>מזומן</option><option>אשראי</option><option>עו״ש</option><option>העברה</option></select></label><label>4 ספרות אחרונות של הכרטיס<input inputMode="numeric" maxLength="4" value={f.card_last4||""} onChange={e=>set("card_last4",e.target.value.replace(/\D/g,"").slice(-4))}/></label><label>תאריך<input type="date" value={f.date||today()} onChange={e=>set("date",e.target.value)}/></label><label>הערה<input value={f.notes||""} onChange={e=>set("notes",e.target.value)}/></label>{flow==="expense"&&<label className="checkline"><input type="checkbox" checked={Boolean(f.exclude_from_average)} onChange={e=>set("exclude_from_average",e.target.checked)}/> הוצאה חריגה — לא לכלול בממוצע החודשי <small>ההוצאה עדיין נספרת בסך ההוצאות ובקטגוריה; רק הממוצע השוטף מתעלם ממנה.</small></label>}<button className="save" onClick={()=>onSave({...f,flow_type:flow,count_as_expense:flow==="expense",count_as_income:flow==="income"||(flow==="saving"&&num(f.income_amount)>0),income_amount:["income","saving"].includes(flow)?Math.min(num(f.income_amount??(flow==="income"?f.amount:0)),Math.abs(num(f.amount))):0})}>שמירה</button>{canDelete&&onDelete&&<button className="secondary danger-action" onClick={()=>onDelete(initial)}>🗑️ מחיקת הוצאה ידנית</button>}{initial&&onApplyRule&&<button className="secondary" onClick={()=>onApplyRule(initial,f.category)}>🧠 למד את העסק — החל על כל החודשים והייבואים הבאים</button>}</div></div>}
 function SortHeader({label,column,sort,onSort}){const active=sort.key===column;return <th><button className="sortbtn" onClick={()=>onSort(column)}>{label}{active?(sort.dir==="asc"?<ArrowUp/>:<ArrowDown/>):<ArrowUpDown/>}</button></th>}
 
@@ -394,42 +335,5 @@ function PasswordRecovery({onDone}){
  return <main className="auth"><div className="authbox"><h1>🔐 בחירת סיסמה חדשה</h1><p>הקישור לאיפוס הסיסמה אומת. בחרי סיסמה חדשה.</p><input dir="ltr" type="password" autoComplete="new-password" placeholder="סיסמה חדשה" value={p1} onChange={e=>setP1(e.target.value)}/><input dir="ltr" type="password" autoComplete="new-password" placeholder="אימות סיסמה" value={p2} onChange={e=>setP2(e.target.value)} onKeyDown={e=>e.key==="Enter"&&save()}/><button disabled={busy} onClick={save}>{busy?"שומר…":"עדכן סיסמה"}</button>{msg&&<div className="notice">{msg}</div>}</div></main>
 }
 
-function Root(){
- const[session,setSession]=useState(undefined),[authReady,setAuthReady]=useState(false),[recovery,setRecovery]=useState(false);
- useEffect(()=>{
-  if(!supabase)return;
-  let alive=true;
-  // One explicit initial read, then one listener. Avoid competing getSession
-  // calls/timers that can replace a newer auth state with an older one.
-  (async()=>{
-   try{
-    const{data,error}=await supabase.auth.getSession();
-    if(!alive)return;
-    if(error)console.warn("Initial auth session error",error);
-    setSession(data?.session??null);
-   }catch(err){
-    console.warn("Initial auth session failed",err);
-    if(alive)setSession(null);
-   }finally{
-    if(alive)setAuthReady(true);
-   }
-  })();
-  const{data:{subscription}}=supabase.auth.onAuthStateChange((event,nextSession)=>{
-   if(!alive)return;
-   console.info("Auth state:",event);
-   if(event==="PASSWORD_RECOVERY")setRecovery(true);
-   if(event==="SIGNED_IN"||event==="TOKEN_REFRESHED"||event==="USER_UPDATED"||event==="INITIAL_SESSION"){
-    if(nextSession)setSession(nextSession);
-   }else if(event==="SIGNED_OUT"){
-    setSession(null);
-   }
-   setAuthReady(true);
-  });
-  return()=>{alive=false;subscription.unsubscribe()}
- },[]);
- if(supabaseConfigError)return <main className="auth"><div className="authbox"><h1>🏠 הוצאות הבית</h1><div className="notice">{supabaseConfigError}</div></div></main>;
- if(!authReady)return <div className="loading">מתחבר…</div>;
- if(recovery)return <PasswordRecovery onDone={()=>setRecovery(false)}/>;
- return session?<App session={session}/>:<Auth onAuthenticated={s=>{setSession(s);setAuthReady(true)}}/>
-}
+function Root(){const[session,setSession]=useState(undefined),[recovery,setRecovery]=useState(false);useEffect(()=>{if(!supabase)return;supabase.auth.getSession().then(({data})=>setSession(data.session));const{data:{subscription}}=supabase.auth.onAuthStateChange((e,s)=>{if(e==="PASSWORD_RECOVERY")setRecovery(true);setSession(s)});return()=>subscription.unsubscribe()},[]);if(supabaseConfigError)return <main className="auth"><div className="authbox"><h1>🏠 הוצאות הבית</h1><div className="notice">{supabaseConfigError}</div></div></main>;if(session===undefined)return <div className="loading">טוען…</div>;if(recovery)return <PasswordRecovery onDone={()=>setRecovery(false)}/>;return session?<App session={session}/>:<Auth/>}
 createRoot(document.getElementById("root")).render(<AppErrorBoundary><Root/></AppErrorBoundary>);
