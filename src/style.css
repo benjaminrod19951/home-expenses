@@ -70,3 +70,8 @@
 
 /* v24.23 */
 .checkline{display:flex!important;align-items:flex-start;gap:8px;flex-wrap:wrap}.checkline input{width:auto;margin-top:3px}.checkline small{width:100%;margin-right:24px}.average-strip{margin:12px 0}.average-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.average-panel>div{display:flex;flex-direction:column;gap:5px}.average-panel strong{font-size:1.45rem}.average-panel small{color:#6b7280}@media(max-width:700px){.average-panel{grid-template-columns:1fr}}
+
+/* v24.24 — monthly actual vs ongoing spend */
+.month-spend-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
+.normalized-row th,.normalized-row td{font-weight:800}
+@media(max-width:760px){.month-spend-summary{grid-template-columns:1fr}}
