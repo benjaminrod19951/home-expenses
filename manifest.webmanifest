@@ -1,10 +1,11 @@
-{
-  "name":"הוצאות הבית",
-  "short_name":"הוצאות הבית",
-  "start_url":"/",
-  "display":"standalone",
-  "background_color":"#f5f7fb",
-  "theme_color":"#172033",
-  "lang":"he",
-  "dir":"rtl"
-}
+# Vercel + Supabase integration commonly provides these automatically:
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLIC_PUBLISHABLE_KEY
+
+# If configuring manually for Vite, these are also supported:
+# VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+# VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLIC_PUBLISHABLE_KEY
+
+# Server-side only. Add this in Vercel Project Settings -> Environment Variables.
+# NEVER expose this as VITE_GROQ_API_KEY and never commit the real key to GitHub.
+GROQ_API_KEY=YOUR_GROQ_API_KEY
