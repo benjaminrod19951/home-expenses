@@ -1,43 +1,33 @@
--- Home Expenses Manager V24.4
--- Run once after V24.3. Safe to run again.
--- Reconciliation policy:
---   1) If a matching detailed card transaction exists, the CARD row owns the expense.
---   2) The matching bank debit is settlement only and is not counted again.
---   3) If no safe card match exists, the bank debit remains an expense.
+import { createClient } from "@supabase/supabase-js";
 
--- Repair V24.3 direct matches where the bank row was made primary.
-update public.transactions
-set flow_type='card_candidate',
-    kind='card_candidate',
-    category='אשראי ישיר / התאמה',
-    count_as_expense=true,
-    count_as_income=false,
-    reconciliation_status=null,
-    linked_transaction_id=null
-where source='עו"ש'
-  and coalesce(manual_override,false)=false
-  and reconciliation_status='direct_bank_owned';
+const buildUrl = typeof __SUPABASE_URL__ !== "undefined" ? __SUPABASE_URL__ : "";
+const buildKey = typeof __SUPABASE_KEY__ !== "undefined" ? __SUPABASE_KEY__ : "";
 
--- Restore the detailed card rows that V24.3 marked as duplicates.
-update public.transactions
-set flow_type='expense',
-    kind='card_purchase',
-    count_as_expense=true,
-    count_as_income=false,
-    reconciliation_status=null,
-    linked_transaction_id=null
-where source='אשראי'
-  and coalesce(manual_override,false)=false
-  and reconciliation_status='direct_duplicate';
+const runtimeUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const runtimeKey =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "";
 
--- Also repair any remaining automatically-created card_duplicate rows from this logic.
-update public.transactions
-set flow_type='expense',
-    kind='card_purchase',
-    count_as_expense=true,
-    count_as_income=false,
-    reconciliation_status=null,
-    linked_transaction_id=null
-where source='אשראי'
-  and coalesce(manual_override,false)=false
-  and coalesce(flow_type,kind)='card_duplicate';
+const supabaseUrl = String(buildUrl || runtimeUrl).trim().replace(/\/+$/, "");
+const supabaseKey = String(buildKey || runtimeKey).trim();
+
+export const supabaseConfigError = !supabaseUrl
+  ? "Supabase URL חסר. ודא שב-Vercel/Supabase integration קיים SUPABASE_URL (או VITE_SUPABASE_URL)."
+  : !supabaseKey
+    ? "מפתח Supabase ציבורי חסר. ודא שקיים SUPABASE_PUBLISHABLE_KEY / SUPABASE_ANON_KEY."
+    : !/^https:\/\/[^/]+\.supabase\.co$/i.test(supabaseUrl)
+      ? `כתובת Supabase אינה תקינה: ${supabaseUrl}`
+      : "";
+
+export const supabase = supabaseConfigError
+  ? null
+  : createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });

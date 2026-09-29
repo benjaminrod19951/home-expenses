@@ -1,45 +1,46 @@
--- Home Expenses Manager V24.3
--- Run once after V24/V24.2. Safe to run again.
+-- Home Expenses Manager V24.18
+-- Adds explicit workspace type (home/business) while keeping the existing household_id
+-- architecture. Existing households remain type 'home'. Safe to run more than once.
 
--- Dashboard category preference.
-alter table public.categories
-  add column if not exists is_primary boolean not null default false;
+alter table public.households
+  add column if not exists workspace_type text not null default 'home';
 
--- Make category upserts/preferences reliable without changing existing rows.
-create unique index if not exists categories_household_name_uidx
-  on public.categories(household_id, name);
-create unique index if not exists categories_one_primary_per_household_uidx
-  on public.categories(household_id)
-  where is_primary = true;
+update public.households
+set workspace_type='home'
+where workspace_type is null or workspace_type not in ('home','business');
 
--- V24.2 marked every bank debit that looked like a card brand as a card payment.
--- That can hide Visa Direct / immediate foreign charges. Put all AUTO-classified
--- rows back into a conservative candidate state. V24.3 then reconciles them:
---   * monthly statement matched to aggregate card rows -> bank row excluded
---   * immediate/direct exact transaction -> bank row counts, card copy excluded
---   * no safe match -> bank row remains an expense (never disappears)
-update public.transactions
-set flow_type='card_candidate',
-    kind='card_candidate',
-    category='אשראי ישיר / התאמה',
-    count_as_expense=true,
-    count_as_income=false,
-    reconciliation_status=null,
-    linked_transaction_id=null
-where source='עו"ש'
-  and coalesce(manual_override,false)=false
-  and coalesce(flow_type,kind)='card_payment'
-  and lower(concat_ws(' ',merchant,bank_description)) ~ '(לאומי[[:space:]]*ויזה|לאומי.*ויזה|ישראכרט|מקס|כאל|cal)';
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname='households_workspace_type_check'
+      and conrelid='public.households'::regclass
+  ) then
+    alter table public.households
+      add constraint households_workspace_type_check
+      check (workspace_type in ('home','business'));
+  end if;
+end $$;
 
--- Undo only automatic direct-card duplicate flags from older reconciliation.
--- They will be recomputed by V24.3 using bank-owned direct charges.
-update public.transactions
-set flow_type='expense',
-    kind='card_purchase',
-    count_as_expense=true,
-    count_as_income=false,
-    reconciliation_status=null,
-    linked_transaction_id=null
-where source='אשראי'
-  and coalesce(manual_override,false)=false
-  and coalesce(flow_type,kind)='card_duplicate';
+-- The app creates a workspace with the existing create_household RPC, then calls
+-- this helper to mark a newly-created workspace as a business. Only a member may
+-- change the type, and only the two supported values are accepted.
+create or replace function public.set_workspace_type(workspace_id uuid, workspace_kind text)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if not public.is_household_member(workspace_id) then
+    raise exception 'אין הרשאה למרחב הזה';
+  end if;
+  if workspace_kind not in ('home','business') then
+    raise exception 'סוג מרחב לא תקין';
+  end if;
+  update public.households
+  set workspace_type=workspace_kind
+  where id=workspace_id;
+end $$;
+
+grant execute on function public.set_workspace_type(uuid,text) to authenticated;

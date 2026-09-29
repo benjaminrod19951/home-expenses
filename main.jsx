@@ -1,33 +1,46 @@
-import { createClient } from "@supabase/supabase-js";
+export const config = { api: { bodyParser: { sizeLimit: "4mb" } } };
 
-const buildUrl = typeof __SUPABASE_URL__ !== "undefined" ? __SUPABASE_URL__ : "";
-const buildKey = typeof __SUPABASE_KEY__ !== "undefined" ? __SUPABASE_KEY__ : "";
+function extensionFor(mime="") {
+  if (mime.includes("mp4") || mime.includes("m4a")) return "m4a";
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("wav")) return "wav";
+  return "webm";
+}
 
-const runtimeUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const runtimeKey =
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "";
+export default async function handler(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const key = process.env.GROQ_API_KEY;
+  if (!key) return res.status(503).json({ error: "GROQ_API_KEY לא מוגדר ב-Vercel" });
+  try {
+    const { audio, mimeType = "audio/webm", vocabulary = [] } = req.body || {};
+    if (!audio || typeof audio !== "string") return res.status(400).json({ error: "לא התקבלה הקלטה" });
+    const buffer = Buffer.from(audio, "base64");
+    if (!buffer.length) return res.status(400).json({ error: "ההקלטה ריקה" });
+    if (buffer.length > 3.5 * 1024 * 1024) return res.status(413).json({ error: "ההקלטה ארוכה מדי" });
 
-const supabaseUrl = String(buildUrl || runtimeUrl).trim().replace(/\/+$/, "");
-const supabaseKey = String(buildKey || runtimeKey).trim();
+    const form = new FormData();
+    const ext = extensionFor(mimeType);
+    form.append("file", new Blob([buffer], { type: mimeType }), `recording.${ext}`);
+    form.append("model", "whisper-large-v3");
+    form.append("language", "he");
+    form.append("temperature", "0");
+    form.append("response_format", "json");
+    const vocab = Array.isArray(vocabulary) ? vocabulary.map(x=>String(x||"").trim()).filter(Boolean).slice(0,180) : [];
+    form.append("prompt", `תמלול מילולי ומדויק בעברית של רשימת הוצאות והכנסות. חשוב במיוחד: העתק כל מספר וסכום ספרה-בספרה בדיוק כפי שנאמר; אל תוסיף אפס ואל תסיר אפס. שמור שמות מוצרים, עסקים ומילות קטגוריה בדיוק ככל האפשר. אם נאמרה מילה שנמצאת באוצר המילים, העדף את הכתיב הזה. אל תשכתב סכומים ואל תסכם את המשפט. אוצר מילים אישי: ${vocab.join(", ")}`);
 
-export const supabaseConfigError = !supabaseUrl
-  ? "Supabase URL חסר. ודא שב-Vercel/Supabase integration קיים SUPABASE_URL (או VITE_SUPABASE_URL)."
-  : !supabaseKey
-    ? "מפתח Supabase ציבורי חסר. ודא שקיים SUPABASE_PUBLISHABLE_KEY / SUPABASE_ANON_KEY."
-    : !/^https:\/\/[^/]+\.supabase\.co$/i.test(supabaseUrl)
-      ? `כתובת Supabase אינה תקינה: ${supabaseUrl}`
-      : "";
-
-export const supabase = supabaseConfigError
-  ? null
-  : createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
+    const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
     });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error("Groq transcription error", response.status, data);
+      return res.status(response.status).json({ error: data?.error?.message || "שירות התמלול החזיר שגיאה" });
+    }
+    return res.status(200).json({ text: data.text || "" });
+  } catch (error) {
+    console.error("Transcription handler failed", error);
+    return res.status(500).json({ error: "לא ניתן לתמלל כרגע" });
+  }
+}
