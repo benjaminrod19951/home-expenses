@@ -1,10 +1,22 @@
-# Home Expenses Manager V24.4
-
-V24.4 changes direct-card reconciliation so the most informative record wins.
-
-- If a bank debit matches exactly one card transaction by amount and nearby date, the **card transaction remains the counted expense**. Its merchant and category stay visible.
-- The matching bank row becomes `card_payment`, is linked to the card row, and is not counted again.
-- If there is no safe card match, the bank debit stays a real expense so foreign/direct charges are never silently lost.
-- The migration repairs V24.3 rows that used the opposite ownership rule.
-
-Run `supabase/v24_4_upgrade.sql` once, then deploy this project to GitHub/Vercel.
+{
+  "name": "home-expenses-manager",
+  "version": "24.29.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.4.3"
+  }
+}
