@@ -1,11 +1,11 @@
--- v24.23: exclude exceptional expenses from normalized monthly average
-
-alter table public.transactions
-  add column if not exists exclude_from_average boolean not null default false;
-
-create index if not exists idx_transactions_household_exclude_average
-  on public.transactions (household_id, exclude_from_average);
-
-select column_name, data_type
-from information_schema.columns
-where table_schema='public' and table_name='transactions' and column_name='exclude_from_average';
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#172033">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>הוצאות הבית</title>
+</head>
+<body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
+</html>
