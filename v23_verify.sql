@@ -38,7 +38,7 @@ function quickEntryType(part){return /(?:^|\s)(?:הכנסה|הכנסות|קיב�
 function parseQuickEntries(text,cats,rules,history=[]){return splitQuickSpeech(text).map((part,i)=>{const amount=amountFromSpeech(part);if(!amount)return null;const type=quickEntryType(part);const payment=/מזומן/.test(part)?"מזומן":/ביט/.test(part)?"ביט":/אשראי/.test(part)?"אשראי":/העברה/.test(part)?"העברה":type==="income"?"העברה":"מזומן";const date=/שלשום/.test(part)?dateOffset(-2):/אתמול/.test(part)?dateOffset(-1):today();const merchant=quickMerchant(part,cats);const category=quickCategory(part,cats,rules,history);return{_key:`q-${Date.now()}-${i}`,type,date,amount,category,merchant,payment_method:payment,notes:`הזנה מהירה: ${part}`}}).filter(Boolean)}
 
 
-function Auth(){const[email,setEmail]=useState(""),[password,setPassword]=useState(""),[signup,setSignup]=useState(false),[msg,setMsg]=useState(""),[busy,setBusy]=useState(false);async function submit(){if(supabaseConfigError)return setMsg(supabaseConfigError);setBusy(true);try{const r=signup?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});if(r.error)setMsg(r.error.message);else if(signup)setMsg("נשלח אימייל לאישור החשבון.");}catch(e){setMsg(String(e?.message||e))}finally{setBusy(false)}}async function forgot(){if(supabaseConfigError)return setMsg(supabaseConfigError);const address=email.trim();if(!address)return setMsg("הכניסי קודם את כתובת האימייל של החשבון.");setBusy(true);try{const{error}=await supabase.auth.resetPasswordForEmail(address,{redirectTo:`${window.location.origin}${window.location.pathname}`});if(error)setMsg(error.message);else setMsg("נשלח קישור לאיפוס הסיסמה. בדקי גם ספאם וקידומי מכירות.");}catch(e){setMsg(String(e?.message||e))}finally{setBusy(false)}}return <main className="auth"><div className="authbox"><h1>🏠 הוצאות הבית</h1><p>ניהול משותף של ההוצאות שלכם</p><small className="version-badge">v24.32</small><input dir="ltr" placeholder="אימייל" value={email} onChange={e=>setEmail(e.target.value)}/><input dir="ltr" type="password" placeholder="סיסמה" value={password} onChange={e=>setPassword(e.target.value)}/><button disabled={busy} onClick={submit}>{busy?"רגע…":signup?"הרשמה":"כניסה"}</button>{!signup&&<button className="link" disabled={busy} onClick={forgot}>שכחתי סיסמה</button>}<button className="link" disabled={busy} onClick={()=>setSignup(!signup)}>{signup?"כבר יש חשבון? כניסה":"אין לך חשבון? הרשמה"}</button>{msg&&<div className="notice">{msg}</div>}</div></main>}
+function Auth(){const[email,setEmail]=useState(""),[password,setPassword]=useState(""),[signup,setSignup]=useState(false),[msg,setMsg]=useState(""),[busy,setBusy]=useState(false);async function submit(){if(supabaseConfigError)return setMsg(supabaseConfigError);setBusy(true);try{const r=signup?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});if(r.error)setMsg(r.error.message);else if(signup)setMsg("נשלח אימייל לאישור החשבון.");}catch(e){setMsg(String(e?.message||e))}finally{setBusy(false)}}async function forgot(){if(supabaseConfigError)return setMsg(supabaseConfigError);const address=email.trim();if(!address)return setMsg("הכניסי קודם את כתובת האימייל של החשבון.");setBusy(true);try{const{error}=await supabase.auth.resetPasswordForEmail(address,{redirectTo:`${window.location.origin}${window.location.pathname}`});if(error)setMsg(error.message);else setMsg("נשלח קישור לאיפוס הסיסמה. בדקי גם ספאם וקידומי מכירות.");}catch(e){setMsg(String(e?.message||e))}finally{setBusy(false)}}return <main className="auth"><div className="authbox"><h1>🏠 הוצאות הבית</h1><p>ניהול משותף של ההוצאות שלכם</p><small className="version-badge">v24.33</small><input dir="ltr" placeholder="אימייל" value={email} onChange={e=>setEmail(e.target.value)}/><input dir="ltr" type="password" placeholder="סיסמה" value={password} onChange={e=>setPassword(e.target.value)}/><button disabled={busy} onClick={submit}>{busy?"רגע…":signup?"הרשמה":"כניסה"}</button>{!signup&&<button className="link" disabled={busy} onClick={forgot}>שכחתי סיסמה</button>}<button className="link" disabled={busy} onClick={()=>setSignup(!signup)}>{signup?"כבר יש חשבון? כניסה":"אין לך חשבון? הרשמה"}</button>{msg&&<div className="notice">{msg}</div>}</div></main>}
 function ExpenseModal({cats,initial,onClose,onSave,onDelete,onAddCategory,onApplyRule}){const[f,setF]=useState(initial||{date:today(),amount:"",category:"סופר",merchant:"",payment_method:"מזומן",card_last4:"",notes:"",flow_type:"expense",count_as_expense:true,count_as_income:false,income_amount:0});const flow=f.flow_type||((f.count_as_income||f.kind==="income")?"income":(f.kind==="transfer"?"transfer":"expense"));const set=(k,v)=>setF({...f,[k]:v});const canDelete=Boolean(initial&&(initial.source==="ידני"||String(initial.external_id||"").startsWith("manual-")));return <div className="overlay"><div className="modal"><div className="modalhead"><h2>{initial?"✏️ עריכת תנועה":"➕ הוצאה ידנית"}</h2><button className="x" onClick={onClose}><X/></button></div><label>סוג תנועה<select value={flow} onChange={e=>{const v=e.target.value;setF({...f,flow_type:v,count_as_expense:v==="expense",count_as_income:v==="income",income_amount:v==="income"?num(f.income_amount||f.amount):0})}}><option value="expense">הוצאה</option><option value="income">הכנסה</option><option value="transfer">העברה / תנועה פנימית</option><option value="card_payment">תשלום כרטיס אשראי (לא הוצאה נוספת)</option><option value="income_review">הכנסה לבדיקה</option><option value="saving">חיסכון / פיקדון</option></select></label><label>סכום<input autoFocus type="number" inputMode="decimal" value={f.amount} onChange={e=>set("amount",e.target.value)}/></label>{["income","saving"].includes(flow)&&<label>{flow==="saving"?"מתוך הסכום שחזר, כמה הוא רווח אמיתי?":"מתוך הסכום, כמה נחשב הכנסה אמיתית?"}<input type="number" inputMode="decimal" value={f.income_amount??(flow==="income"?f.amount:0)} onChange={e=>set("income_amount",e.target.value)}/><small>{flow==="saving"?"לדוגמה: הופקדו בעבר 50,000 ₪ וחזרו 52,000 ₪ — הזן 2,000 ₪. הקרן נשארת תנועה פנימית ורק הרווח נספר כהכנסה.":"לדוגמה: פירעון פיקדון — הקרן אינה הכנסה; הזן כאן רק את הריבית/הרווח."}</small></label>}<label>קטגוריה<div className="inline"><select value={f.category||"לא מסווג"} onChange={e=>set("category",e.target.value)}>{cats.map(c=><option key={c}>{c}</option>)}<option>לא מסווג</option></select><button type="button" onClick={onAddCategory}>+ חדשה</button></div></label><label>בית עסק / תיאור<input value={f.merchant||""} onChange={e=>set("merchant",e.target.value)}/></label><label>אמצעי תשלום<select value={f.payment_method||"אשראי"} onChange={e=>set("payment_method",e.target.value)}><option>מזומן</option><option>אשראי</option><option>עו״ש</option><option>העברה</option></select></label><label>4 ספרות אחרונות של הכרטיס<input inputMode="numeric" maxLength="4" value={f.card_last4||""} onChange={e=>set("card_last4",e.target.value.replace(/\D/g,"").slice(-4))}/></label><label>תאריך<input type="date" value={f.date||today()} onChange={e=>set("date",e.target.value)}/></label><label>הערה<input value={f.notes||""} onChange={e=>set("notes",e.target.value)}/></label>{flow==="expense"&&<label className="checkline"><input type="checkbox" checked={Boolean(f.exclude_from_average)} onChange={e=>set("exclude_from_average",e.target.checked)}/> הוצאה חריגה — לא לכלול בממוצע החודשי <small>ההוצאה עדיין נספרת בסך ההוצאות ובקטגוריה; רק הממוצע השוטף מתעלם ממנה.</small></label>}<button className="save" onClick={()=>onSave({...f,flow_type:flow,count_as_expense:flow==="expense",count_as_income:flow==="income"||(flow==="saving"&&num(f.income_amount)>0),income_amount:["income","saving"].includes(flow)?Math.min(num(f.income_amount??(flow==="income"?f.amount:0)),Math.abs(num(f.amount))):0})}>שמירה</button>{canDelete&&onDelete&&<button className="secondary danger-action" onClick={()=>onDelete(initial)}>🗑️ מחיקת הוצאה ידנית</button>}{initial&&onApplyRule&&<button className="secondary" onClick={()=>onApplyRule(initial,f.category)}>🧠 למד את העסק — החל על כל החודשים והייבואים הבאים</button>}</div></div>}
 function SortHeader({label,column,sort,onSort}){const active=sort.key===column;return <th><button className="sortbtn" onClick={()=>onSort(column)}>{label}{active?(sort.dir==="asc"?<ArrowUp/>:<ArrowDown/>):<ArrowUpDown/>}</button></th>}
 
@@ -249,49 +249,83 @@ function App({session}){
     for(const c of cards){await update(c.id,{flow_type:"expense",count_as_expense:true,count_as_income:false,reconciliation_status:"card_detail_reconciled",linked_transaction_id:cards.length===1?b.id:null},"אשראי");usedCard.add(c.id)}
   };
 
-  // PASS 1 — STATEMENT FIRST. Only rows from the regular statement sheet are
-  // allowed to explain a large monthly debit. Direct/foreign rows cannot "steal"
-  // one of these lines. Match by actual charge date + card + exact signed total.
-  for(const b of [...bank].sort((a,b)=>num(b.amount)-num(a.amount))){
-    if(usedBank.has(b.id))continue;
-    const l4=bankLast4(b),p=provider(b);
-    const last4Options=l4?[l4]:[...new Set(statementCards.filter(c=>c.charge_date===b.date).map(c=>String(c.card_last4||"")).filter(Boolean))];
-    const matches=[];
-    for(const opt of last4Options){
-      if(!allowedForProvider(opt,p))continue;
-      const cs=statementCards.filter(c=>!usedCard.has(c.id)&&c.charge_date===b.date&&String(c.card_last4||"")===opt);
-      if(!cs.length)continue;
-      const sum=cs.reduce((a,c)=>a+num(c.amount),0);
-      if(same(sum,b.amount)){matches.push({cs,opt,sum,status:"card_statement_sum_match"});continue}
-      // Some exports assign very-late purchases to this charge_date even though the
-      // bank settlement closed just before them. Reconcile only when removing 1–3
-      // purchases from the final 3 days explains the bank debit almost exactly.
-      // This is intentionally narrow; it is not a broad amount tolerance.
-      const delta=sum-num(b.amount);
-      if(delta>0.02){
-        const chargeDay=day(b.date);
-        const boundary=cs.filter(c=>{const d=day(c.date);const gap=(chargeDay-d)/DAY;return Number.isFinite(gap)&&gap>=0&&gap<=3&&num(c.amount)>0}).sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,12);
-        let excluded=null;
-        outer: for(let i=0;i<boundary.length;i++){
-          if(same(boundary[i].amount,delta,2.01)){excluded=[boundary[i]];break}
-          for(let j=i+1;j<boundary.length;j++){
-            const s2=num(boundary[i].amount)+num(boundary[j].amount);
-            if(Math.abs(s2-delta)<=2){excluded=[boundary[i],boundary[j]];break outer}
-            for(let k=j+1;k<boundary.length;k++){
-              const s3=s2+num(boundary[k].amount);
-              if(Math.abs(s3-delta)<=2){excluded=[boundary[i],boundary[j],boundary[k]];break outer}
-            }
-          }
-        }
-        if(excluded){
-          const excludedIds=new Set(excluded.map(x=>x.id));
-          const included=cs.filter(x=>!excludedIds.has(x.id));
-          const includedSum=included.reduce((a,c)=>a+num(c.amount),0);
-          if(included.length&&Math.abs(includedSum-num(b.amount))<=2)matches.push({cs:included,opt,sum:includedSum,status:"card_statement_boundary_match"});
+  // PASS 1 — MONTHLY STATEMENT.
+  // Purchases belong to their transaction month. The bank settlement is normally
+  // posted in the FOLLOWING calendar month (e.g. August purchases -> 2 September bank debit).
+  // charge_date remains useful as a secondary hint, but it must not force purchases
+  // into the bank-posting month.
+  const ym=d=>String(d||"").slice(0,7);
+  const previousMonth=d=>{
+    const m=/^(\d{4})-(\d{2})/.exec(String(d||""));
+    if(!m)return"";
+    const dt=new Date(Number(m[1]),Number(m[2])-1,1);
+    dt.setMonth(dt.getMonth()-1);
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`;
+  };
+  const statementAmount=c=>num(c.original_amount||c.amount);
+  const boundarySubset=(cards,target)=>{
+    // Only late-month purchases may explain a small statement-closing difference.
+    // Try up to 3 rows from the last 3 calendar days of the purchase month.
+    const late=cards.filter(c=>{
+      const d=/^\d{4}-(\d{2})-(\d{2})$/.exec(String(c.date||""));
+      if(!d)return false;
+      const y=Number(String(c.date).slice(0,4)),m=Number(d[1]),dayNo=Number(d[2]);
+      const lastDay=new Date(y,m,0).getDate();
+      return lastDay-dayNo<=2;
+    }).slice(-12);
+    if(target<=2)return[];
+    for(let i=0;i<late.length;i++){
+      if(Math.abs(statementAmount(late[i])-target)<=2)return[late[i]];
+      for(let j=i+1;j<late.length;j++){
+        const s2=statementAmount(late[i])+statementAmount(late[j]);
+        if(Math.abs(s2-target)<=2)return[late[i],late[j]];
+        for(let k=j+1;k<late.length;k++){
+          const s3=s2+statementAmount(late[k]);
+          if(Math.abs(s3-target)<=2)return[late[i],late[j],late[k]];
         }
       }
     }
-    if(matches.length===1)await markMatch(b,matches[0].cs,matches[0].status||"card_statement_sum_match");
+    return null;
+  };
+
+  for(const b of [...bank].sort((a,b)=>num(b.amount)-num(a.amount))){
+    if(usedBank.has(b.id))continue;
+    const l4=bankLast4(b),p=provider(b),purchaseMonth=previousMonth(b.date);
+    if(!purchaseMonth)continue;
+
+    // Primary rule: a bank card debit in month M reconciles card purchases from M-1.
+    // If the bank reference exposes last4, require it. Otherwise accept only a unique
+    // candidate among cards that are not known to belong to another provider.
+    const options=l4?[l4]:[...new Set(statementCards
+      .filter(c=>!usedCard.has(c.id)&&ym(c.date)===purchaseMonth)
+      .map(c=>String(c.card_last4||"")).filter(Boolean))];
+
+    const matches=[];
+    for(const opt of options){
+      if(!allowedForProvider(opt,p))continue;
+      const cs=statementCards.filter(c=>!usedCard.has(c.id)&&ym(c.date)===purchaseMonth&&String(c.card_last4||"")===opt);
+      if(!cs.length)continue;
+      const total=cs.reduce((a,c)=>a+statementAmount(c),0);
+
+      if(same(total,b.amount,2.01)){
+        matches.push({cs,status:"card_previous_month_statement_match"});
+        continue;
+      }
+
+      // Secondary rule: if a few purchases at the very end of the month were
+      // pushed to the next statement, allow their exact removal to explain the delta.
+      const delta=total-num(b.amount);
+      const excluded=delta>2?boundarySubset(cs,delta):null;
+      if(excluded&&excluded.length){
+        const excludedIds=new Set(excluded.map(x=>x.id));
+        const included=cs.filter(x=>!excludedIds.has(x.id));
+        const includedTotal=included.reduce((a,c)=>a+statementAmount(c),0);
+        if(included.length&&Math.abs(includedTotal-num(b.amount))<=2){
+          matches.push({cs:included,status:"card_previous_month_boundary_match"});
+        }
+      }
+    }
+    if(matches.length===1)await markMatch(b,matches[0].cs,matches[0].status);
   }
 
   // PASS 2 — Direct and foreign rows are one-to-one. Prefer exact charge date,
