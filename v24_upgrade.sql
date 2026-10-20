@@ -1,19 +1,45 @@
--- V24 verification
-select column_name,data_type
-from information_schema.columns
-where table_schema='public' and table_name='planned_items'
-order by ordinal_position;
+-- Home Expenses Manager V24.3
+-- Run once after V24/V24.2. Safe to run again.
 
-select flow_type,count_as_income,count(*) as rows,sum(coalesce(income_amount,0)) as income_amount
-from public.transactions
-where source='עו״ש' and coalesce(bank_credit,0)>0
-group by flow_type,count_as_income
-order by flow_type;
+-- Dashboard category preference.
+alter table public.categories
+  add column if not exists is_primary boolean not null default false;
 
-select month,
-       round(sum(amount) filter (where count_as_expense=true),2) as expenses,
-       round(sum(coalesce(income_amount,amount)) filter (where count_as_income=true),2) as income
-from public.transactions
-group by month
-order by month desc
-limit 12;
+-- Make category upserts/preferences reliable without changing existing rows.
+create unique index if not exists categories_household_name_uidx
+  on public.categories(household_id, name);
+create unique index if not exists categories_one_primary_per_household_uidx
+  on public.categories(household_id)
+  where is_primary = true;
+
+-- V24.2 marked every bank debit that looked like a card brand as a card payment.
+-- That can hide Visa Direct / immediate foreign charges. Put all AUTO-classified
+-- rows back into a conservative candidate state. V24.3 then reconciles them:
+--   * monthly statement matched to aggregate card rows -> bank row excluded
+--   * immediate/direct exact transaction -> bank row counts, card copy excluded
+--   * no safe match -> bank row remains an expense (never disappears)
+update public.transactions
+set flow_type='card_candidate',
+    kind='card_candidate',
+    category='אשראי ישיר / התאמה',
+    count_as_expense=true,
+    count_as_income=false,
+    reconciliation_status=null,
+    linked_transaction_id=null
+where source='עו"ש'
+  and coalesce(manual_override,false)=false
+  and coalesce(flow_type,kind)='card_payment'
+  and lower(concat_ws(' ',merchant,bank_description)) ~ '(לאומי[[:space:]]*ויזה|לאומי.*ויזה|ישראכרט|מקס|כאל|cal)';
+
+-- Undo only automatic direct-card duplicate flags from older reconciliation.
+-- They will be recomputed by V24.3 using bank-owned direct charges.
+update public.transactions
+set flow_type='expense',
+    kind='card_purchase',
+    count_as_expense=true,
+    count_as_income=false,
+    reconciliation_status=null,
+    linked_transaction_id=null
+where source='אשראי'
+  and coalesce(manual_override,false)=false
+  and coalesce(flow_type,kind)='card_duplicate';
