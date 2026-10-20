@@ -1,61 +1,56 @@
--- Home Expenses Manager V24
--- Run AFTER V23. Safe to run more than once.
+-- V17: correct financial flow model.
+-- Keeps bank movements and card purchases in one transaction table,
+-- but explicitly separates real expenses, real income, transfers and card payments.
 
--- 1) Future planning: expected income/expenses are kept separate from actual transactions.
-create table if not exists public.planned_items (
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  user_id uuid not null,
-  plan_date date not null,
-  month text not null,
-  type text not null check (type in ('income','expense')),
-  amount numeric(14,2) not null check (amount >= 0),
-  category text not null default 'אחר',
-  description text not null default 'תכנון',
-  notes text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table public.transactions add column if not exists source_key text;
+alter table public.transactions add column if not exists flow_type text;
+alter table public.transactions add column if not exists count_as_expense boolean;
+alter table public.transactions add column if not exists count_as_income boolean;
+alter table public.transactions add column if not exists income_amount numeric(14,2);
 
-create index if not exists planned_items_household_month_idx
-  on public.planned_items(household_id, month);
-
-alter table public.planned_items enable row level security;
-
-drop policy if exists "planned read" on public.planned_items;
-drop policy if exists "planned insert" on public.planned_items;
-drop policy if exists "planned update" on public.planned_items;
-drop policy if exists "planned delete" on public.planned_items;
-
-create policy "planned read" on public.planned_items for select to authenticated
-  using(public.is_household_member(household_id));
-create policy "planned insert" on public.planned_items for insert to authenticated
-  with check(public.is_household_member(household_id) and user_id=auth.uid());
-create policy "planned update" on public.planned_items for update to authenticated
-  using(public.is_household_member(household_id))
-  with check(public.is_household_member(household_id));
-create policy "planned delete" on public.planned_items for delete to authenticated
-  using(public.is_household_member(household_id));
-
--- 2) V23 was intentionally too conservative and put almost every incoming bank
--- credit into income_review. In V24, an ordinary incoming credit counts as income.
--- We keep likely self-transfers from Leumi, savings/deposits, and explicit internal
--- transfer descriptions out of automatic income so the user can review them.
+-- Stable source key lets a corrected re-import UPDATE a previously imported
+-- transaction instead of creating a duplicate, even when the original parser
+-- stored the wrong amount.
 update public.transactions
-set flow_type='income',
-    kind='income',
-    category='הכנסה',
-    count_as_expense=false,
-    count_as_income=true,
-    income_amount=coalesce(nullif(bank_credit,0), abs(amount)),
-    manual_override=false
-where source='עו״ש'
-  and coalesce(manual_override,false)=false
-  and coalesce(bank_credit,0) > 0
-  and coalesce(flow_type,kind)='income_review'
-  and lower(concat_ws(' ', merchant, bank_description)) !~
-      '(בנק[[:space:]]*לאומי|לאומי[[:space:]]*לישראל|leumi|חשבון[[:space:]]*שלי|העברה[[:space:]]*עצמית|העברה.*בין|פיקדון|חיסכון|חסכון|פדיון|פירעון)';
+set source_key = case
+  when source = 'עו״ש' then
+    'bank|' || to_char(date,'YYYY-MM-DD') || '|' || to_char(coalesce(value_date,date),'YYYY-MM-DD') || '|' || coalesce(reference,'') || '|' || regexp_replace(trim(coalesce(merchant,'')), '\s+', ' ', 'g')
+  when source = 'אשראי' then
+    'card|' || to_char(date,'YYYY-MM-DD') || '|' || to_char(coalesce(charge_date,date),'YYYY-MM-DD') || '|' || regexp_replace(trim(coalesce(merchant,'')), '\s+', ' ', 'g') || '|' || to_char(amount,'FM999999990.00') || '|' || coalesce(card_last4,'')
+  else source || '|' || coalesce(external_id,'')
+end
+where source_key is null;
 
--- 3) Ensure category-only corrections never affect counting flags.
--- No data update is needed here: the V24 app updates only category + manual_override
--- when moving expenses between categories.
+-- Reclassify old rows using the bank description. This specifically repairs
+-- the earlier parser bug that could accidentally treat the balance column as income.
+update public.transactions
+set flow_type = case
+  when source = 'אשראי' or kind = 'card_purchase' then 'expense'
+  when source = 'עו״ש' and lower(coalesce(merchant,'')) ~ 'לאומי\s*ויזה|בנהפ[- ]?ישראכרט|מקס\s*איט\s*פיננ|ישראכרט\s*בע' then 'card_payment'
+  when source = 'עו״ש' and lower(coalesce(merchant,'')) ~ 'הקמת\s*פיקדון|משיכת\s*חיסכון|פירעון\s*פיקדון|פדיון\s*פיקדון|פדיון\s*חיסכון|משיכת\s*פיקדון' then 'transfer'
+  when source = 'עו״ש' and coalesce(kind,'') = 'income' and coalesce(category,'') = 'הכנסה' then 'income_review'
+  when source = 'עו״ש' and coalesce(kind,'') = 'transfer' then 'transfer'
+  when source = 'ידני' and coalesce(kind,'manual') = 'manual' then 'expense'
+  else 'expense'
+end
+where flow_type is null or flow_type = '';
+
+update public.transactions
+set count_as_expense = (flow_type = 'expense'),
+    count_as_income = (flow_type = 'income'),
+    income_amount = case when flow_type = 'income' then coalesce(income_amount,amount) else 0 end
+where count_as_expense is null or count_as_income is null or income_amount is null;
+
+-- Savings/deposit movements are transfers by default. If a maturity contains
+-- interest, the user can edit the transaction and enter only the income portion.
+update public.transactions
+set count_as_expense=false, count_as_income=false, income_amount=0, category=case when amount>0 then 'חיסכון / פיקדון' else category end
+where flow_type='transfer' and (merchant ilike '%פיקדון%' or merchant ilike '%חיסכון%');
+
+create index if not exists transactions_source_key_idx on public.transactions(household_id,source_key);
+create index if not exists transactions_flow_type_idx on public.transactions(household_id,flow_type);
+
+comment on column public.transactions.flow_type is 'expense | income | transfer | card_payment | income_review';
+comment on column public.transactions.count_as_expense is 'Whether this movement contributes to household expense totals';
+comment on column public.transactions.count_as_income is 'Whether this movement contributes to household income totals';
+comment on column public.transactions.income_amount is 'Actual income portion; useful for deposit redemption where principal is not income';

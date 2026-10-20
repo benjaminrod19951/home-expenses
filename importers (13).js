@@ -1,32 +1,46 @@
--- V11/V12 source-audit migration.
--- Keeps the original imported totals independent from editable transaction rows.
-create table if not exists public.import_batches(
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  file_name text not null,
-  file_key text not null,
-  source text not null,
-  source_total numeric(14,2) not null default 0,
-  source_expense_total numeric(14,2) not null default 0,
-  source_expense_count integer not null default 0,
-  row_count integer not null default 0,
-  month_totals jsonb not null default '{}'::jsonb,
-  month_expense_totals jsonb not null default '{}'::jsonb,
-  imported_at timestamptz not null default now(),
-  created_at timestamptz not null default now(),
-  unique(household_id,file_key)
-);
+-- Home Expenses Manager V24.18
+-- Adds explicit workspace type (home/business) while keeping the existing household_id
+-- architecture. Existing households remain type 'home'. Safe to run more than once.
 
-alter table public.import_batches enable row level security;
-drop policy if exists "import batch read" on public.import_batches;
-drop policy if exists "import batch insert" on public.import_batches;
-drop policy if exists "import batch update" on public.import_batches;
-drop policy if exists "import batch delete" on public.import_batches;
-create policy "import batch read" on public.import_batches for select to authenticated using(is_household_member(household_id));
-create policy "import batch insert" on public.import_batches for insert to authenticated with check(is_household_member(household_id) and user_id=auth.uid());
-create policy "import batch update" on public.import_batches for update to authenticated using(is_household_member(household_id)) with check(is_household_member(household_id));
-create policy "import batch delete" on public.import_batches for delete to authenticated using(is_household_member(household_id));
+alter table public.households
+  add column if not exists workspace_type text not null default 'home';
 
-alter table public.transactions add column if not exists import_batch_id uuid references public.import_batches(id) on delete set null;
-create index if not exists transactions_import_batch_idx on public.transactions(import_batch_id);
+update public.households
+set workspace_type='home'
+where workspace_type is null or workspace_type not in ('home','business');
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname='households_workspace_type_check'
+      and conrelid='public.households'::regclass
+  ) then
+    alter table public.households
+      add constraint households_workspace_type_check
+      check (workspace_type in ('home','business'));
+  end if;
+end $$;
+
+-- The app creates a workspace with the existing create_household RPC, then calls
+-- this helper to mark a newly-created workspace as a business. Only a member may
+-- change the type, and only the two supported values are accepted.
+create or replace function public.set_workspace_type(workspace_id uuid, workspace_kind text)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if not public.is_household_member(workspace_id) then
+    raise exception 'אין הרשאה למרחב הזה';
+  end if;
+  if workspace_kind not in ('home','business') then
+    raise exception 'סוג מרחב לא תקין';
+  end if;
+  update public.households
+  set workspace_type=workspace_kind
+  where id=workspace_id;
+end $$;
+
+grant execute on function public.set_workspace_type(uuid,text) to authenticated;

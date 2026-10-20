@@ -1,32 +1,33 @@
--- V24.1 — repair malformed historical Leumi bank imports.
--- The old parser could shift columns and turn dates such as 09/07/2026 into 9,072,026.
--- This script backs up ONLY unmistakably corrupted rows, then removes them so the bank file can be re-imported.
+import { createClient } from "@supabase/supabase-js";
 
-begin;
+const buildUrl = typeof __SUPABASE_URL__ !== "undefined" ? __SUPABASE_URL__ : "";
+const buildKey = typeof __SUPABASE_KEY__ !== "undefined" ? __SUPABASE_KEY__ : "";
 
-create table if not exists public.transactions_corrupt_bank_backup_v241
-as select * from public.transactions with no data;
+const runtimeUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const runtimeKey =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "";
 
-insert into public.transactions_corrupt_bank_backup_v241
-select t.*
-from public.transactions t
-where t.source = 'עו״ש'
-  and coalesce(t.merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
-  and abs(coalesce(t.amount,0)) >= 1000000
-  and not exists (
-    select 1 from public.transactions_corrupt_bank_backup_v241 b where b.id=t.id
-  );
+const supabaseUrl = String(buildUrl || runtimeUrl).trim().replace(/\/+$/, "");
+const supabaseKey = String(buildKey || runtimeKey).trim();
 
-delete from public.transactions t
-where t.source = 'עו״ש'
-  and coalesce(t.merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
-  and abs(coalesce(t.amount,0)) >= 1000000;
+export const supabaseConfigError = !supabaseUrl
+  ? "Supabase URL חסר. ודא שב-Vercel/Supabase integration קיים SUPABASE_URL (או VITE_SUPABASE_URL)."
+  : !supabaseKey
+    ? "מפתח Supabase ציבורי חסר. ודא שקיים SUPABASE_PUBLISHABLE_KEY / SUPABASE_ANON_KEY."
+    : !/^https:\/\/[^/]+\.supabase\.co$/i.test(supabaseUrl)
+      ? `כתובת Supabase אינה תקינה: ${supabaseUrl}`
+      : "";
 
-commit;
-
--- Verification: this should return zero rows.
-select id,date,merchant,amount,bank_debit,bank_credit
-from public.transactions
-where source='עו״ש'
-  and coalesce(merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
-  and abs(coalesce(amount,0)) >= 1000000;
+export const supabase = supabaseConfigError
+  ? null
+  : createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
