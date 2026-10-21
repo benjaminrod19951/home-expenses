@@ -1,8 +1,11 @@
--- V18 safety repair: remove only the legacy bank rows where the amount is
--- exactly the date encoded as DDMMYYYY (e.g. 30/07/2026 -> 30072026).
--- Run once if the automatic repair did not remove them.
-delete from public.transactions t
-where t.source = 'עו״ש'
-  and t.amount >= 10000000
-  and t.amount <= 99999999
-  and round(t.amount) = to_number(to_char(t.date, 'DDMMYYYY'), '99999999');
+-- v24.23: exclude exceptional expenses from normalized monthly average
+
+alter table public.transactions
+  add column if not exists exclude_from_average boolean not null default false;
+
+create index if not exists idx_transactions_household_exclude_average
+  on public.transactions (household_id, exclude_from_average);
+
+select column_name, data_type
+from information_schema.columns
+where table_schema='public' and table_name='transactions' and column_name='exclude_from_average';

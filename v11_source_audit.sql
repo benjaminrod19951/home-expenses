@@ -1,33 +1,30 @@
-import { createClient } from "@supabase/supabase-js";
+-- V8: persistent merchant/category rules for the shared household.
+-- Run this once in Supabase SQL Editor.
+create table if not exists public.merchant_category_rules(
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households(id) on delete cascade,
+  merchant_key text not null,
+  merchant_label text not null,
+  category text not null,
+  created_at timestamptz default now(),
+  unique(household_id,merchant_key)
+);
 
-const buildUrl = typeof __SUPABASE_URL__ !== "undefined" ? __SUPABASE_URL__ : "";
-const buildKey = typeof __SUPABASE_KEY__ !== "undefined" ? __SUPABASE_KEY__ : "";
+alter table public.merchant_category_rules enable row level security;
 
-const runtimeUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const runtimeKey =
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "";
+create policy "merchant rule read" on public.merchant_category_rules
+for select to authenticated
+using(is_household_member(household_id));
 
-const supabaseUrl = String(buildUrl || runtimeUrl).trim().replace(/\/+$/, "");
-const supabaseKey = String(buildKey || runtimeKey).trim();
+create policy "merchant rule insert" on public.merchant_category_rules
+for insert to authenticated
+with check(is_household_member(household_id));
 
-export const supabaseConfigError = !supabaseUrl
-  ? "Supabase URL חסר. ודא שב-Vercel/Supabase integration קיים SUPABASE_URL (או VITE_SUPABASE_URL)."
-  : !supabaseKey
-    ? "מפתח Supabase ציבורי חסר. ודא שקיים SUPABASE_PUBLISHABLE_KEY / SUPABASE_ANON_KEY."
-    : !/^https:\/\/[^/]+\.supabase\.co$/i.test(supabaseUrl)
-      ? `כתובת Supabase אינה תקינה: ${supabaseUrl}`
-      : "";
+create policy "merchant rule update" on public.merchant_category_rules
+for update to authenticated
+using(is_household_member(household_id))
+with check(is_household_member(household_id));
 
-export const supabase = supabaseConfigError
-  ? null
-  : createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    });
+create policy "merchant rule delete" on public.merchant_category_rules
+for delete to authenticated
+using(is_household_member(household_id));
