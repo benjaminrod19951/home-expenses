@@ -1,65 +1,226 @@
-export const config = { api: { bodyParser: { sizeLimit: "256kb" } } };
+import * as XLSX from 'xlsx';
 
-function cleanJsonText(text="") {
-  const s = String(text || "").trim();
-  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  return (fenced ? fenced[1] : s).trim();
-}
+const clean=s=>String(s??'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
+const norm=s=>clean(s).toLowerCase().replace(/["'`´]/g,'');
+const normalizedMerchant=s=>clean(s);
 
-async function chooseModel(key) {
-  const preferred = [
-    "openai/gpt-oss-20b",
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "openai/gpt-oss-120b",
-  ];
-  try {
-    const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { Authorization: `Bearer ${key}` } });
-    const d = await r.json().catch(()=>({}));
-    const ids = new Set((d?.data || []).map(x => x?.id).filter(Boolean));
-    return preferred.find(id => ids.has(id)) || "llama-3.1-8b-instant";
-  } catch {
-    return "llama-3.1-8b-instant";
+const signedMoney=v=>{
+  if(v===null||v===undefined||v==='') return 0;
+  if(typeof v==='number') return Number.isFinite(v)?v:0;
+  let s=String(v).replace(/₪|\s/g,'').replace(/,/g,'').trim();
+  const paren=/^\(.*\)$/.test(s); s=s.replace(/[()]/g,'');
+  const n=parseFloat(s.replace(/[^0-9.\-]/g,''));
+  if(!Number.isFinite(n)) return 0;
+  return paren?-Math.abs(n):n;
+};
+const absMoney=v=>Math.abs(signedMoney(v));
+
+function excelDate(v){
+  if(v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
+  if(typeof v==='number' && v>30000 && v<60000){
+    const d=XLSX.SSF.parse_date_code(v);
+    return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
   }
+  const s=clean(v); if(!s)return '';
+  let m=s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if(m)return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m=s.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+  if(m)return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  return s.slice(0,10);
 }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  const key = process.env.GROQ_API_KEY;
-  if (!key) return res.status(503).json({ error: "GROQ_API_KEY לא מוגדר ב-Vercel" });
-  try {
-    const transcript = String(req.body?.transcript || "").trim();
-    const categories = Array.isArray(req.body?.categories) ? req.body.categories.map(String).filter(Boolean).slice(0, 120) : [];
-    const historyMerchants = Array.isArray(req.body?.historyMerchants) ? req.body.historyMerchants.map(String).filter(Boolean).slice(0, 120) : [];
-    if (!transcript) return res.status(400).json({ error: "לא התקבל תמלול לפענוח" });
+function idx(headers,tests){
+  return headers.findIndex(h=>tests.some(t=>h===t||h.includes(t)));
+}
 
-    const system = `אתה ממיר תמלול דיבור בעברית לרשימת תנועות כספיות. החזר JSON בלבד: {"entries":[...]}.\nכל entry: type=expense|income, merchant, amount מספר חיובי, category, payment_method, date_hint.\n\nכללים קריטיים:\n- העתק סכומים בדיוק מהתמלול. 380 חייב להישאר 380; 3880 חייב להישאר 3880. אל תוסיף או תסיר ספרות ואפסים.\n- אם סכום נאמר במילים, המר אותו למספר רק אם הוא חד-משמעי.\n- merchant הוא התיאור שנאמר ליד הסכום; אל תחליף אותו ב\"תנועה ידנית\" אם יש תיאור אמיתי.\n- קטע אחרי הסכום יכול להיות קטגוריה. אם נאמר \"קטגוריה X\" השתמש ב-X אם הוא נמצא ברשימה.\n- category חייבת להיות אחת מהקטגוריות שסופקו; אם אין התאמה בטוחה החזר \"לא מסווג\". אל תמציא קטגוריה.\n- הכנסה: מילים כמו הכנסה, קיבלתי, נכנס, זיכוי. אחרת ברירת מחדל expense.\n- payment_method: מזומן, ביט, אשראי, העברה, עו\"ש. אם לא נאמר: expense=מזומן, income=העברה.\n- date_hint: today, yesterday, day_before_yesterday או null.\n- אל תאחד תנועות. אל תיצור שורה בלי סכום. שמור סדר. חובה להחזיר שורה לכל הוצאה מזוהה, גם כשיש 3, 5 או 10 תנועות.
-- תקן שגיאות כתיב ברורות בשמות עסקים או מוצרים לפי ההקשר והיסטוריית העסקים שסופקה. למשל בלאדות => ולדות כשזה ההקשר. אל תשנה מספרים או סכומים, ואל תנחש אם המשמעות אינה ודאית.\n- מילים כמו היום/אתמול/שלשום אינן חלק מה-merchant.\n- אם הטקסט אומר למשל \"שתי מנורות 380 שקל קטגוריה עיצוב הבית\", החזר merchant=\"שתי מנורות\", amount=380, category=\"עיצוב הבית\" אם היא קיימת.`;
-    const user = `שמות עסקים קודמים (לסיוע בתיקון שגיאות תמלול בלבד):\n${historyMerchants.join(", ")}\n\nקטגוריות קיימות:\n${categories.map(c=>`- ${c}`).join("\n")}\n\nתמלול מלא:\n${transcript}`;
-    const model = await chooseModel(key);
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [{ role: "system", content: system }, { role: "user", content: user }]
-      })
+function classifyBank(desc,direction){
+  const n=norm(desc);
+  const cardPayment=/(לאומי\s*ויזה|לאומי.*ויזה|ישראכרט|מקס\s*(איט|it|פיננ)|כאל|cal\s*(card|כרטיס))/i.test(n);
+  const saving=/(פיקדון|חיסכון|חסכון|משיכת חיסכון|משיכת פיקדון|פירעון פיקדון|פדיון פיקדון|פדיון חיסכון|הקמת פיקדון)/i.test(n);
+  const internal=/(העברה.*בין|העברה עצמית|חשבון שלי|חשבון.*שלי|פייבוקס שלי|paybox שלי|לאומי.*שלי)/i.test(n);
+  const possibleOwnLeumi=/(בנק לאומי|לאומי לישראל|leumi)/i.test(n);
+  const explicitIncome=/(משכורת|שכר עבודה|קצבת|קיצבה|פנסיה|ביטוח לאומי)/i.test(n);
+  if(direction==='out' && cardPayment) return {kind:'card_candidate',flow_type:'card_candidate',category:'אשראי ישיר / התאמה',count_as_expense:true,count_as_income:false,income_amount:0};
+  if(saving) return {kind:'saving',flow_type:'saving',category:'חיסכון/פיקדון',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(internal) return {kind:'transfer',flow_type:'transfer',category:'העברה',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(direction==='in' && explicitIncome) return {kind:'income',flow_type:'income',category:'הכנסה',count_as_expense:false,count_as_income:true,income_amount:null};
+  // Most incoming bank credits are real income for this household. Only likely
+  // self-transfers from Leumi stay in review until the user confirms the source.
+  if(direction==='in' && possibleOwnLeumi) return {kind:'income_review',flow_type:'income_review',category:'הכנסה לבדיקה',count_as_expense:false,count_as_income:false,income_amount:0};
+  if(direction==='in') return {kind:'income',flow_type:'income',category:'הכנסה',count_as_expense:false,count_as_income:true,income_amount:null};
+  return {kind:'expense',flow_type:'expense',category:'אחר',count_as_expense:true,count_as_income:false,income_amount:0};
+}
+
+function findBankHeader(rows){
+  for(let i=0;i<Math.min(rows.length,100);i++){
+    // A real Leumi header is a compact 8-column row. Ignore wrapper/nested HTML
+    // rows that contain the whole transaction table flattened into one row.
+    const raw=rows[i]||[];
+    if(raw.length<6 || raw.length>15) continue;
+    const r=raw.map(norm);
+    const hasDate=r.some(x=>x==='תאריך'||x.includes('תאריך'));
+    const hasDesc=r.some(x=>x.includes('תיאור')||x.includes('פעולה'));
+    const hasDebit=r.some(x=>x.includes('בחובה')||x==='חובה');
+    const hasCredit=r.some(x=>x.includes('בזכות')||x==='זכות');
+    if(hasDate&&hasDesc&&hasDebit&&hasCredit) return {index:i,headers:r};
+  }
+  return null;
+}
+
+function parseBankRows(rows){
+  const h=findBankHeader(rows); if(!h)return [];
+  const {index,headers}=h;
+  const dateI=idx(headers,['תאריך']);
+  const valueDateI=idx(headers,['תאריך ערך','תאריך הפך']);
+  const descI=idx(headers,['תיאור','פעולה','פרטים']);
+  const refI=idx(headers,['אסמכתא']);
+  const debitI=idx(headers,['בחובה','חובה']);
+  const creditI=idx(headers,['בזכות','זכות']);
+  const balanceI=headers.findIndex(h=>h==='יתרה'||h.includes('יתרה'));
+  const noteI=idx(headers,['הערה']);
+  if([dateI,descI,debitI,creditI].some(i=>i<0))return [];
+  const all=[];
+  for(let r=index+1;r<rows.length;r++){
+    const row=rows[r]||[];
+    const date=excelDate(row[dateI]); if(!/^\d{4}-\d{2}-\d{2}$/.test(date))continue;
+    const merchantRaw=clean(row[descI]);
+    // Defensive guard: a shifted/flattened row must never turn a date string into
+    // a money amount (e.g. 09/07/2026 -> 9,072,026).
+    if(/^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(merchantRaw)) continue;
+    const debitCell=clean(row[debitI]), creditCell=clean(row[creditI]);
+    if(/^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(debitCell) || /^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(creditCell)) continue;
+    const debit=absMoney(row[debitI]),credit=absMoney(row[creditI]);
+    if(debit===0&&credit===0)continue;
+    const direction=debit!==0?'out':'in';
+    const amount=direction==='out'?debit:credit;
+    const merchant=merchantRaw||'תנועת בנק';
+    const meta=classifyBank(merchant,direction);
+    const ref=refI>=0?clean(row[refI]):'';
+    const valueDate=valueDateI>=0?excelDate(row[valueDateI]):'';
+    const bankBalance=balanceI>=0?signedMoney(row[balanceI]):null;
+    const sourceKey=['bank',date,valueDate||date,norm(merchant),ref,debit.toFixed(2),credit.toFixed(2)].join('|');
+    all.push({
+      date,month:date.slice(0,7),merchant,amount,category:meta.category,source:'עו״ש',kind:meta.kind,flow_type:meta.flow_type,
+      count_as_expense:meta.count_as_expense,count_as_income:meta.count_as_income,payment_method:'עו״ש',card_last4:null,
+      notes:noteI>=0?(clean(row[noteI])||null):null,reference:ref||null,value_date:valueDate||date,balance:bankBalance,
+      bank_description:merchant,bank_direction:direction,bank_debit:debit,bank_credit:credit,bank_value_date:valueDate||date,
+      bank_balance:bankBalance,original_amount:amount,income_amount:meta.kind==='income'?amount:(meta.income_amount??0),source_key:sourceKey,external_id:sourceKey
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      console.error("Groq parser error", response.status, model, data);
-      return res.status(response.status).json({ error: data?.error?.message || "שירות הפענוח החזיר שגיאה" });
-    }
-    const raw = data?.choices?.[0]?.message?.content || "";
-    let parsed;
-    try { parsed = JSON.parse(cleanJsonText(raw)); }
-    catch { return res.status(502).json({ error: "שירות הפענוח החזיר תשובה לא תקינה" }); }
-    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-    return res.status(200).json({ entries, model });
-  } catch (error) {
-    console.error("Quick parser failed", error);
-    return res.status(500).json({ error: "לא ניתן לפענח כרגע" });
   }
+  return all;
+}
+
+function cardHeader(rows){
+  for(let i=0;i<Math.min(rows.length,100);i++){
+    const h=(rows[i]||[]).map(norm);
+    const dateI=idx(h,['תאריך עסקה','תאריך']);
+    const merchantI=idx(h,['שם בית העסק','בית עסק','בית העסק/תיאור','merchant']);
+    const amountI=idx(h,['סכום חיוב','amount']);
+    if(dateI>=0&&merchantI>=0&&amountI>=0)return {index:i,headers:h};
+  }
+  return null;
+}
+
+function parseCardRows(rows,sheetName=""){
+  const found=cardHeader(rows); if(!found)return [];
+  const sheetKind=/חיוב מיידי/.test(sheetName)?'card_direct':(/חו\"ל|מט\"ח/.test(sheetName)?'card_foreign':'card_purchase');
+  const {index,headers}=found;
+  const dateI=idx(headers,['תאריך עסקה','תאריך']);
+  const merchantI=idx(headers,['שם בית העסק','בית עסק','בית העסק/תיאור','merchant']);
+  const catI=idx(headers,['קטגוריה']);
+  const cardI=idx(headers,['4 ספרות אחרונות','4 ספרות']);
+  const amountI=idx(headers,['סכום חיוב','amount']);
+  const chargeI=idx(headers,['תאריך חיוב']);
+  const noteI=idx(headers,['הערות','הערה']);
+  const originalI=idx(headers,['סכום עסקה מקורי']);
+  const base=[];
+  for(let r=index+1;r<rows.length;r++){
+    const row=rows[r]||[];
+    const date=excelDate(row[dateI]);
+    const merchant=clean(row[merchantI]);
+    const amount=signedMoney(row[amountI]);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!merchant||amount===0)continue;
+    const chargeDate=chargeI>=0?excelDate(row[chargeI]):'';
+    const cardLast4=cardI>=0?String(row[cardI]??'').replace(/\D/g,'').slice(-4):'';
+    const category=catI>=0?(clean(row[catI])||'אחר'):'אחר';
+    // Keep the first occurrence compatible with V20/V22 external IDs, and append
+    // an occurrence suffix only when an identical transaction appears more than once.
+    const fingerprint=['card',date,norm(merchant),Math.abs(amount).toFixed(2)].join('|');
+    base.push({fingerprint,date,month:date.slice(0,7),merchant,amount,category,source:'אשראי',kind:sheetKind,flow_type:'expense',
+      count_as_expense:true,count_as_income:false,payment_method:'אשראי',card_last4:cardLast4||null,charge_date:chargeDate||null,
+      notes:noteI>=0?(clean(row[noteI])||null):null,original_amount:originalI>=0?signedMoney(row[originalI]):amount,income_amount:0});
+  }
+  const seen=new Map();
+  return base.map(x=>{
+    const n=(seen.get(x.fingerprint)||0)+1; seen.set(x.fingerprint,n);
+    const externalId=n===1?x.fingerprint:`${x.fingerprint}|${n}`;
+    const sourceKey=['card',x.date,x.charge_date||x.date,norm(x.merchant),Math.abs(x.amount).toFixed(2),x.card_last4||'',n].join('|');
+    const {fingerprint,...rest}=x;
+    return {...rest,source_key:sourceKey,external_id:externalId};
+  });
+}
+
+function decodeHtml(s){
+  return String(s??'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&#x27;/gi,"'")
+    .replace(/<br\s*\/?>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function bankRowsFromHtml(text){
+  // Prefer the browser DOM parser: Leumi exports an HTML document with nested
+  // tables, so regex alone can accidentally flatten a wrapper table. We only
+  // accept a table that contains the real compact 8-column transaction header.
+  try{
+    if(typeof DOMParser!=="undefined"){
+      const doc=new DOMParser().parseFromString(text,"text/html");
+      for(const table of [...doc.querySelectorAll("table")]){
+        const rows=[...table.querySelectorAll(":scope > tbody > tr, :scope > thead > tr, :scope > tr")].map(tr=>
+          [...tr.children].filter(c=>/^(TD|TH)$/.test(c.tagName)).map(c=>clean(c.textContent))
+        ).filter(r=>r.length);
+        if(!rows.some(r=>r.length>=6&&r.length<=10&&r.some(x=>norm(x).includes('תיאור'))&&r.some(x=>norm(x).includes('בחובה'))&&r.some(x=>norm(x).includes('בזכות'))))continue;
+        const parsed=parseBankRows(rows); if(parsed.length)return parsed;
+      }
+    }
+  }catch(_){/* use fallback below */}
+
+  // Fallback for environments without DOMParser.
+  const tables=[...text.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/gi)].map(m=>m[0]);
+  for(const html of tables){
+    const probe=decodeHtml(html);
+    if(!probe.includes('תיאור')||!probe.includes('בחובה')||!probe.includes('בזכות'))continue;
+    const rows=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>
+      [...m[1].matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(c=>decodeHtml(c[1]))
+    ).filter(r=>r.length);
+    const parsed=parseBankRows(rows); if(parsed.length)return parsed;
+  }
+  return [];
+}
+
+export async function importXlsx(file){
+  const buf=await file.arrayBuffer();
+  // Leumi's .xls export is actually HTML. Parse it explicitly before SheetJS.
+  try{
+    const text=new TextDecoder('utf-8').decode(buf);
+    if(/<html|<table/i.test(text)){
+      const bank=bankRowsFromHtml(text); if(bank.length)return bank;
+    }
+  }catch(_){/* continue */}
+
+  let wb;
+  try{wb=XLSX.read(buf,{type:'array',cellDates:true,raw:true});}
+  catch(e){throw new Error('לא ניתן לקרוא את הקובץ: '+e.message)}
+
+  const bank=[];
+  for(const sheet of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true});
+    const parsed=parseBankRows(rows); if(parsed.length)bank.push(...parsed);
+  }
+  if(bank.length)return bank;
+
+  const card=[];
+  for(const sheet of wb.SheetNames){
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true});
+    card.push(...parseCardRows(rows,sheet));
+  }
+  if(card.length)return card;
+  throw new Error('לא נמצאה טבלת בנק או אשראי מוכרת בקובץ.');
 }

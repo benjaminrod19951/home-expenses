@@ -1,118 +1,92 @@
-create extension if not exists pgcrypto;
+-- V23: audited unified-ledger upgrade.
+-- Safe to run on the existing database. Idempotent: columns/indexes use IF NOT EXISTS.
+-- Main fixes: no reference to nonexistent `description`, stable count flags,
+-- safer bank classification, legacy repair, and manual-edit protection.
 
-create table if not exists public.households(
-  id uuid primary key default gen_random_uuid(),
-  name text not null default 'הבית שלנו',
-  join_code text not null unique,
-  created_by uuid not null references auth.users(id) on delete cascade,
-  created_at timestamptz default now()
-);
+alter table public.transactions add column if not exists source text;
+alter table public.transactions add column if not exists flow_type text;
+alter table public.transactions add column if not exists count_as_expense boolean;
+alter table public.transactions add column if not exists count_as_income boolean;
+alter table public.transactions add column if not exists income_amount numeric(14,2);
+alter table public.transactions add column if not exists source_key text;
+alter table public.transactions add column if not exists reference text;
+alter table public.transactions add column if not exists value_date date;
+alter table public.transactions add column if not exists balance numeric(14,2);
+alter table public.transactions add column if not exists reconciliation_status text default 'unmatched';
+alter table public.transactions add column if not exists reconciled_transaction_id uuid references public.transactions(id) on delete set null;
+alter table public.transactions add column if not exists linked_transaction_id uuid references public.transactions(id) on delete set null;
+alter table public.transactions add column if not exists bank_description text;
+alter table public.transactions add column if not exists bank_direction text;
+alter table public.transactions add column if not exists bank_debit numeric(14,2);
+alter table public.transactions add column if not exists bank_credit numeric(14,2);
+alter table public.transactions add column if not exists bank_value_date date;
+alter table public.transactions add column if not exists bank_balance numeric(14,2);
+alter table public.transactions add column if not exists original_amount numeric(14,2);
+alter table public.transactions add column if not exists manual_override boolean not null default false;
 
-create table if not exists public.household_members(
-  household_id uuid not null references public.households(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  primary key(household_id,user_id)
-);
+-- Keep the two generations of bank metadata aligned where one side is missing.
+update public.transactions
+set bank_description = coalesce(bank_description, merchant),
+    bank_value_date = coalesce(bank_value_date, value_date),
+    bank_balance = coalesce(bank_balance, balance),
+    value_date = coalesce(value_date, bank_value_date),
+    balance = coalesce(balance, bank_balance),
+    source_key = coalesce(source_key, external_id)
+where source = 'עו״ש';
 
-create table if not exists public.transactions(
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  external_id text not null,
-  date date not null,
-  month text not null,
-  merchant text not null,
-  amount numeric(12,2) not null,
-  category text not null,
-  source text not null,
-  kind text not null default 'bank_movement',
-  payment_method text not null default 'אשראי',
-  card_last4 text,
-  charge_date date,
-  notes text,
-  created_at timestamptz default now(),
-  unique(household_id,external_id)
-);
+-- Reclassify BANK rows only. Previous V22 omitted the source restriction and
+-- could accidentally classify a normal credit-card merchant containing "מקס".
+update public.transactions
+set flow_type = 'card_payment',
+    kind = 'card_payment',
+    category = 'חיוב כרטיס אשראי',
+    count_as_expense = false,
+    count_as_income = false,
+    income_amount = 0
+where source = 'עו״ש'
+  and coalesce(manual_override,false) = false
+  and lower(concat_ws(' ', merchant, bank_description)) ~
+      '(לאומי[[:space:]]*ויזה|לאומי.*ויזה|ישראכרט|מקס[[:space:]]*(איט|it|פיננ)|כאל|cal[[:space:]]*(card|כרטיס))';
 
-create table if not exists public.categories(
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  name text not null,
-  created_at timestamptz default now(),
-  unique(household_id,name)
-);
+-- Savings/deposit principal movements are internal cash movements, not expenses/income.
+update public.transactions
+set flow_type = 'saving',
+    kind = 'saving',
+    category = 'חיסכון/פיקדון',
+    count_as_expense = false,
+    count_as_income = false,
+    income_amount = 0
+where source = 'עו״ש'
+  and coalesce(manual_override,false) = false
+  and lower(concat_ws(' ', merchant, bank_description)) ~
+      '(פיקדון|חיסכון|חסכון|משיכת חיסכון|משיכת פיקדון|פירעון פיקדון|פדיון פיקדון|פדיון חיסכון|הקמת פיקדון)';
 
-alter table public.households enable row level security;
-alter table public.household_members enable row level security;
-alter table public.transactions enable row level security;
-alter table public.categories enable row level security;
+-- Backfill counting flags for legacy rows without overriding explicit values.
+update public.transactions
+set count_as_expense = case
+      when coalesce(flow_type,kind) = 'expense' then true
+      else false
+    end,
+    count_as_income = case
+      when coalesce(flow_type,kind) = 'income' then true
+      else false
+    end,
+    income_amount = case
+      when coalesce(flow_type,kind) = 'income' then coalesce(income_amount, amount)
+      else coalesce(income_amount,0)
+    end
+where count_as_expense is null or count_as_income is null;
 
-create or replace function public.is_household_member(h uuid)
-returns boolean language sql stable security definer set search_path=public
-as $$ select exists(select 1 from public.household_members where household_id=h and user_id=auth.uid()) $$;
+-- V18 legacy parser repair: remove only impossible rows where amount equals DDMMYYYY.
+delete from public.transactions t
+where t.source = 'עו״ש'
+  and t.amount >= 10000000
+  and t.amount <= 99999999
+  and round(t.amount) = to_number(to_char(t.date, 'DDMMYYYY'), '99999999');
 
-create policy "household read" on public.households for select to authenticated using(is_household_member(id));
-create policy "household create" on public.households for insert to authenticated with check(created_by=auth.uid());
-
-create policy "member read" on public.household_members for select to authenticated
-using(user_id=auth.uid() or is_household_member(household_id));
-create policy "member insert" on public.household_members for insert to authenticated
-with check(user_id=auth.uid());
-
-create policy "tx read" on public.transactions for select to authenticated using(is_household_member(household_id));
-create policy "tx insert" on public.transactions for insert to authenticated
-with check(is_household_member(household_id) and user_id=auth.uid());
-create policy "tx update" on public.transactions for update to authenticated
-using(is_household_member(household_id)) with check(is_household_member(household_id));
-create policy "tx delete" on public.transactions for delete to authenticated
-using(is_household_member(household_id));
-
-create policy "cat read" on public.categories for select to authenticated using(is_household_member(household_id));
-create policy "cat insert" on public.categories for insert to authenticated with check(is_household_member(household_id));
-create policy "cat delete" on public.categories for delete to authenticated using(is_household_member(household_id));
-
-create or replace function public.create_household(house_name text,code text)
-returns uuid language plpgsql security definer set search_path=public
-as $$
-declare hid uuid;
-begin
-  insert into households(name,join_code,created_by)
-  values(coalesce(nullif(trim(house_name),''),'הבית שלנו'),upper(trim(code)),auth.uid())
-  returning id into hid;
-  insert into household_members values(hid,auth.uid());
-  return hid;
-end $$;
-
-create or replace function public.join_household_by_code(code text)
-returns uuid language plpgsql security definer set search_path=public
-as $$
-declare hid uuid;
-begin
-  select id into hid from households where join_code=upper(trim(code));
-  if hid is null then raise exception 'קוד הבית לא נמצא'; end if;
-  insert into household_members values(hid,auth.uid()) on conflict do nothing;
-  return hid;
-end $$;
-
-grant execute on function public.create_household(text,text) to authenticated;
-grant execute on function public.join_household_by_code(text) to authenticated;
-create table if not exists public.merchant_category_rules(
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  merchant_key text not null,
-  merchant_label text not null,
-  category text not null,
-  created_at timestamptz default now(),
-  unique(household_id,merchant_key)
-);
-
-alter table public.merchant_category_rules enable row level security;
-
-create policy "merchant rule read" on public.merchant_category_rules for select to authenticated
-using(is_household_member(household_id));
-create policy "merchant rule insert" on public.merchant_category_rules for insert to authenticated
-with check(is_household_member(household_id));
-create policy "merchant rule update" on public.merchant_category_rules for update to authenticated
-using(is_household_member(household_id)) with check(is_household_member(household_id));
-create policy "merchant rule delete" on public.merchant_category_rules for delete to authenticated
-using(is_household_member(household_id));
+create index if not exists transactions_household_date_idx on public.transactions(household_id,date);
+create index if not exists transactions_household_source_idx on public.transactions(household_id,source);
+create index if not exists transactions_household_flow_idx on public.transactions(household_id,flow_type);
+create index if not exists transactions_household_external_idx on public.transactions(household_id,external_id);
+create index if not exists transactions_reference_idx on public.transactions(household_id,reference);
+create index if not exists transactions_kind_idx on public.transactions(household_id,kind);

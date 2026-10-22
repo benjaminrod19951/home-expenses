@@ -1,32 +1,32 @@
--- V11/V12 source-audit migration.
--- Keeps the original imported totals independent from editable transaction rows.
-create table if not exists public.import_batches(
-  id uuid primary key default gen_random_uuid(),
-  household_id uuid not null references public.households(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  file_name text not null,
-  file_key text not null,
-  source text not null,
-  source_total numeric(14,2) not null default 0,
-  source_expense_total numeric(14,2) not null default 0,
-  source_expense_count integer not null default 0,
-  row_count integer not null default 0,
-  month_totals jsonb not null default '{}'::jsonb,
-  month_expense_totals jsonb not null default '{}'::jsonb,
-  imported_at timestamptz not null default now(),
-  created_at timestamptz not null default now(),
-  unique(household_id,file_key)
-);
+-- V24.1 — repair malformed historical Leumi bank imports.
+-- The old parser could shift columns and turn dates such as 09/07/2026 into 9,072,026.
+-- This script backs up ONLY unmistakably corrupted rows, then removes them so the bank file can be re-imported.
 
-alter table public.import_batches enable row level security;
-drop policy if exists "import batch read" on public.import_batches;
-drop policy if exists "import batch insert" on public.import_batches;
-drop policy if exists "import batch update" on public.import_batches;
-drop policy if exists "import batch delete" on public.import_batches;
-create policy "import batch read" on public.import_batches for select to authenticated using(is_household_member(household_id));
-create policy "import batch insert" on public.import_batches for insert to authenticated with check(is_household_member(household_id) and user_id=auth.uid());
-create policy "import batch update" on public.import_batches for update to authenticated using(is_household_member(household_id)) with check(is_household_member(household_id));
-create policy "import batch delete" on public.import_batches for delete to authenticated using(is_household_member(household_id));
+begin;
 
-alter table public.transactions add column if not exists import_batch_id uuid references public.import_batches(id) on delete set null;
-create index if not exists transactions_import_batch_idx on public.transactions(import_batch_id);
+create table if not exists public.transactions_corrupt_bank_backup_v241
+as select * from public.transactions with no data;
+
+insert into public.transactions_corrupt_bank_backup_v241
+select t.*
+from public.transactions t
+where t.source = 'עו״ש'
+  and coalesce(t.merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
+  and abs(coalesce(t.amount,0)) >= 1000000
+  and not exists (
+    select 1 from public.transactions_corrupt_bank_backup_v241 b where b.id=t.id
+  );
+
+delete from public.transactions t
+where t.source = 'עו״ש'
+  and coalesce(t.merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
+  and abs(coalesce(t.amount,0)) >= 1000000;
+
+commit;
+
+-- Verification: this should return zero rows.
+select id,date,merchant,amount,bank_debit,bank_credit
+from public.transactions
+where source='עו״ש'
+  and coalesce(merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
+  and abs(coalesce(amount,0)) >= 1000000;

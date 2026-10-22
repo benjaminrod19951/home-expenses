@@ -1,32 +1,19 @@
--- V24.1 — repair malformed historical Leumi bank imports.
--- The old parser could shift columns and turn dates such as 09/07/2026 into 9,072,026.
--- This script backs up ONLY unmistakably corrupted rows, then removes them so the bank file can be re-imported.
+-- V24 verification
+select column_name,data_type
+from information_schema.columns
+where table_schema='public' and table_name='planned_items'
+order by ordinal_position;
 
-begin;
-
-create table if not exists public.transactions_corrupt_bank_backup_v241
-as select * from public.transactions with no data;
-
-insert into public.transactions_corrupt_bank_backup_v241
-select t.*
-from public.transactions t
-where t.source = 'עו״ש'
-  and coalesce(t.merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
-  and abs(coalesce(t.amount,0)) >= 1000000
-  and not exists (
-    select 1 from public.transactions_corrupt_bank_backup_v241 b where b.id=t.id
-  );
-
-delete from public.transactions t
-where t.source = 'עו״ש'
-  and coalesce(t.merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
-  and abs(coalesce(t.amount,0)) >= 1000000;
-
-commit;
-
--- Verification: this should return zero rows.
-select id,date,merchant,amount,bank_debit,bank_credit
+select flow_type,count_as_income,count(*) as rows,sum(coalesce(income_amount,0)) as income_amount
 from public.transactions
-where source='עו״ש'
-  and coalesce(merchant,'') ~ '^\\s*[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4}\\s*$'
-  and abs(coalesce(amount,0)) >= 1000000;
+where source='עו״ש' and coalesce(bank_credit,0)>0
+group by flow_type,count_as_income
+order by flow_type;
+
+select month,
+       round(sum(amount) filter (where count_as_expense=true),2) as expenses,
+       round(sum(coalesce(income_amount,amount)) filter (where count_as_income=true),2) as income
+from public.transactions
+group by month
+order by month desc
+limit 12;
