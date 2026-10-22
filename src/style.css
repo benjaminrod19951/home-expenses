@@ -77,3 +77,6 @@
 @media(max-width:760px){.month-spend-summary{grid-template-columns:1fr}}
 
 .version-badge{display:block;margin:-6px 0 10px;color:#7b8495;font-size:12px;text-align:center}
+
+/* v24.37: grocery drill-down inside monthly expenses */
+.grocery-controls{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0}.grocery-controls label{display:flex;flex-direction:column;gap:6px;min-width:190px;flex:1}.grocery-controls select{max-width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:white}.grocery-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0}.grocery-stats>div{border:1px solid #e2e8f0;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}.grocery-stats strong{font-size:1.35rem}.grocery-analysis table td{vertical-align:top}.grocery-analysis h3{margin:18px 0 8px}@media(max-width:680px){.grocery-stats{grid-template-columns:1fr}.grocery-analysis .tablewrap{overflow-x:auto}}
