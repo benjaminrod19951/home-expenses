@@ -727,7 +727,7 @@ export function App({ session }) {
       {months.map(m => <option key={m}>{m}</option>)}
     </select>}
    <span className="navmsg">{msg}</span>
-   <small title="גרסת אפליקציה">v24.46</small>
+   <small title="גרסת אפליקציה">v24.47</small>
  </nav>
  {view === "income" && <>
    <section className="cards">

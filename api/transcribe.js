@@ -1,4 +1,5 @@
 import { requireUser } from "./_auth.js";
+import { buildWhisperPrompt, isPromptLengthError } from "./_whisperPrompt.js";
 
 export const config = { api: { bodyParser: { sizeLimit: "4mb" } } };
 
@@ -22,29 +23,29 @@ export default async function handler(req, res) {
     if (!buffer.length) return res.status(400).json({ error: "ההקלטה ריקה" });
     if (buffer.length > 3.5 * 1024 * 1024) return res.status(413).json({ error: "ההקלטה ארוכה מדי" });
 
-    const form = new FormData();
     const ext = extensionFor(mimeType);
-    form.append("file", new Blob([buffer], { type: mimeType }), `recording.${ext}`);
-    form.append("model", "whisper-large-v3");
-    form.append("language", "he");
-    form.append("temperature", "0");
-    form.append("response_format", "json");
-    // Groq Whisper limits prompt to 896 characters, irrespective of audio length.
-    const vocab = Array.isArray(vocabulary) ? [...new Set(vocabulary.map(x=>String(x||"").trim()).filter(Boolean))] : [];
-    const intro = "תמלל בעברית בדיוק, במיוחד סכומים ושמות בתי עסק. אל תמציא מספרים. מילון: ";
-    let hint = "";
-    for (const term of vocab) {
-      if ((intro + hint + (hint ? ", " : "") + term).length > 650) break;
-      hint += (hint ? ", " : "") + term;
+    const send = async (prompt) => {
+      const form = new FormData();
+      form.append("file", new Blob([buffer], { type: mimeType }), `recording.${ext}`);
+      form.append("model", "whisper-large-v3");
+      form.append("language", "he");
+      form.append("temperature", "0");
+      form.append("response_format", "json");
+      if (prompt) form.append("prompt", prompt);
+      const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}` },
+        body: form,
+      });
+      return { response, data: await response.json().catch(() => ({})) };
+    };
+    // Vocabulary hint is byte-limited (api/_whisperPrompt.js). If Groq still rejects its length,
+    // transcribe once more without it rather than failing the recording.
+    let { response, data } = await send(buildWhisperPrompt(vocabulary));
+    if (!response.ok && isPromptLengthError(data?.error?.message)) {
+      console.warn("Whisper prompt rejected, retrying without vocabulary", data?.error?.message);
+      ({ response, data } = await send(""));
     }
-    form.append("prompt", intro + hint);
-
-    const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}` },
-      body: form,
-    });
-    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       console.error("Groq transcription error", response.status, data);
       return res.status(response.status).json({ error: data?.error?.message || "שירות התמלול החזיר שגיאה" });

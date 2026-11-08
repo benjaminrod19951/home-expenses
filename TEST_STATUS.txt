@@ -1,7 +1,7 @@
-v24.46 — test status
+v24.47 — test status
 
 PASSED (run here):
-- npm test: 64 tests, 64 passed, 0 failed (also under TZ=UTC, America/Los_Angeles, Pacific/Kiritimati)
+- npm test: 68 tests, 68 passed, 0 failed (also under TZ=UTC, America/Los_Angeles, Pacific/Kiritimati)
 - Syntax check (node --check) of all files in api/, src/lib/, src/services/, src/importers.js
 - Static check: no undefined names / missing imports across src/
 - App bundled with esbuild (the engine Vite uses) and run in Chromium with mock Supabase data:
