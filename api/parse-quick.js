@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     const historyMerchants = Array.isArray(req.body?.historyMerchants) ? req.body.historyMerchants.map(String).filter(Boolean).slice(0, 120) : [];
     if (!transcript) return res.status(400).json({ error: "לא התקבל תמלול לפענוח" });
 
-    const system = 'החזר JSON בלבד במבנה {"entries":[{"type":"expense","merchant":"","amount":0,"category":"","payment_method":"מזומן","date_hint":null}]}. פענח כל הוצאה בנפרד. סכומים חייבים להיות מדויקים. type יכול להיות expense או income. date_hint יכול להיות today,yesterday,day_before_yesterday או null. בחר קטגוריה מהרשימה או לא מסווג. אל תמציא עסקאות. הסכום יכול להיאמר לפני או אחרי הפריט ("150 שקל, טיטולים, תינוק"). מילה ששווה לשם קטגוריה מהרשימה היא הקטגוריה ולא חלק מהתיאור.';
+    const system = 'החזר JSON בלבד במבנה {"entries":[{"type":"expense","merchant":"","amount":0,"category":"","payment_method":"מזומן","date_hint":null}]}. פענח כל הוצאה בנפרד. סכומים חייבים להיות מדויקים. type יכול להיות expense או income. date_hint יכול להיות today,yesterday,day_before_yesterday או null. בחר קטגוריה מהרשימה או לא מסווג. אל תמציא עסקאות. הסכום יכול להיאמר לפני או אחרי הפריט ("150 שקל, טיטולים, תינוק"). מילה ששווה לשם קטגוריה מהרשימה היא הקטגוריה ולא חלק מהתיאור. merchant הוא מה שנקנה או שם בית העסק (למשל "טיטולים", "פרחים") ולעולם לא ריק כשנאמר פריט.';
     // All categories must reach the model, otherwise it cannot choose e.g. "תינוק" (the old 220-character cut dropped them).
     const categoryList = categories.slice(0,80).join(', ').slice(0,1500);
     const merchantList = historyMerchants.slice(0,40).join(', ').slice(0,600);

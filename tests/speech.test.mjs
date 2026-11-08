@@ -51,3 +51,20 @@ test("regression: Hebrew filler words are removed from the description (JS \\b i
   assert.equal(row[0], 125);
   assert.ok(!/שילמתי|במזומן|במאה|וחמישה/.test(row[1]), row[1]);
 });
+
+import { mergeAiWithLocal, correctTranscriptSpelling } from "../src/lib/speech.js";
+const cats3 = ["סופר", "מתנות", "תינוק", "אחר"];
+const REAL = "תיטולים 150 שקל קטגוריה תינוק נורית 250 שקל קטגוריה תינוק\n350 שקל, פרחים ומתנות\n400 שקל, תיתולים ומטרנה, תינוק";
+
+test("regression (recording 2): a new entry right after 'קטגוריה X' without a comma is not lost", () => {
+  const rows = parseQuickEntries(correctTranscriptSpelling(REAL), cats3, [], []).map(r => [r.amount, r.merchant, r.category]);
+  assert.deepEqual(rows, [[150, "טיטולים", "תינוק"], [250, "נורית", "תינוק"], [350, "פרחים ומתנות", "מתנות"], [400, "טיטולים ומטרנה", "תינוק"]]);
+});
+test("regression: AI rows without a description get it from the local parse of the same amount", () => {
+  const local = parseQuickEntries(correctTranscriptSpelling(REAL), cats3, [], []);
+  const ai = [{ amount: 150, merchant: "תנועה ידנית", category: "תינוק" }, { amount: 400, merchant: "", category: "אחר" }];
+  assert.deepEqual(mergeAiWithLocal(ai, local).map(r => [r.merchant, r.category]), [["טיטולים", "תינוק"], ["טיטולים ומטרנה", "תינוק"]]);
+});
+test("common Whisper misspelling is corrected (תיטולים / תיתולים -> טיטולים)", () => {
+  assert.equal(correctTranscriptSpelling("תיתולים 50 שקל"), "טיטולים 50 שקל");
+});

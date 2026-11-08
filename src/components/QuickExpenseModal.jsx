@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Keyboard, Mic, MicOff, Save, Trash2, X } from "lucide-react";
 import { normalizeMerchant } from "../lib/finance.js";
 import { dateOffset, money, num, today } from "../lib/format.js";
-import { correctTranscriptSpelling, parseQuickEntries, quickCategory } from "../lib/speech.js";
+import { correctTranscriptSpelling, mergeAiWithLocal, parseQuickEntries, quickCategory } from "../lib/speech.js";
 
 export function QuickExpenseModal({ cats, rules, history, workspaceId, onClose, onSaveAll }) {
     const draftKey = `quick-entry-draft:${workspaceId || "default"}`;
@@ -41,7 +41,7 @@ export function QuickExpenseModal({ cats, rules, history, workspaceId, onClose, 
         const type = e?.type === "income" ? "income" : "expense";
         const rawCat = String(e?.category || "").trim();
         const matchedCat = cats.find(c => normalizeMerchant(c) === normalizeMerchant(rawCat)) || cats.find(c => normalizeMerchant(c).includes(normalizeMerchant(rawCat)) || normalizeMerchant(rawCat).includes(normalizeMerchant(c)));
-        const merchant = String(e?.merchant || "").trim() || "תנועה ידנית";
+        const merchant = String(e?.merchant || e?.description || e?.item || e?.name || "").trim() || "תנועה ידנית";
         const learned = quickCategory(merchant, cats, rules, history);
         const category = matchedCat || (learned && cats.includes(learned) ? learned : null) || (cats.includes("אחר") ? "אחר" : "לא מסווג");
         const payment = ["מזומן", "ביט", "אשראי", "העברה", "עו״ש"].includes(e?.payment_method) ? e.payment_method : (type === "income" ? "העברה" : "מזומן");
@@ -71,7 +71,7 @@ export function QuickExpenseModal({ cats, rules, history, workspaceId, onClose, 
                 throw new Error(data.error || "שירות הפענוח החזיר שגיאה");
             if (seq !== parseSeqRef.current)
                 return;
-            const ai = normalizeAiRows(data.entries);
+            const ai = mergeAiWithLocal(normalizeAiRows(data.entries), local); // fill empty descriptions from the local parse
             // Do not silently drop expenses if AI misses one of the locally recognized entries.
             if (!ai.length || ai.length < local.length) {
                 if (local.length) {

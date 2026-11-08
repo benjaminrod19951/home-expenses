@@ -167,7 +167,7 @@ export function quickCategory(text, cats, rules, history = []) {
 export function correctTranscriptSpelling(value, history = []) {
     let result = String(value || "");
     // Conservative substitutions only; amounts and dates remain untouched.
-    const replacements = [[/(^|\s)בלאדות(?=\s|$|[,.;])/gu, "$1ולדות"]];
+    const replacements = [[/(^|\s)בלאדות(?=\s|$|[,.;])/gu, "$1ולדות"], [/(^|\s)(?:ו)?ת[יי]?[טת]ולים(?=\s|$|[,.;])/gu, "$1טיטולים"]];
     for (const [pattern, replacement] of replacements)
         result = result.replace(pattern, replacement);
     // Prefer a previously used merchant name only for a near-exact single-word typo.
@@ -240,7 +240,35 @@ export function quickEntryType(part) {
     return /(?:^|\s)(?:הכנסה|הכנסות|קיבלתי|קיבלנו|נכנס(?:ה)?|התקבל(?:ה)?|זיכוי)(?:\s|$)/.test(String(part || "")) ? "income" : "expense";
 }
 
+// "טיטולים 150 שקל קטגוריה תינוק נורית 250 שקל ..." — a new entry starts right after the category name.
+export function separateAfterExplicitCategory(text, cats = []) {
+    const names = [...cats].filter(Boolean).sort((a, b) => b.length - a.length).map(c => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    if (!names.length)
+        return String(text || "");
+    const re = new RegExp(`((?:קטגוריה|קטגוריית)\\s+(?:${names.join("|")}))(?![\\p{L}\\p{N}])[ \\t]+(?=[^,;.\\s])`, "gu");
+    return String(text || "").replace(re, "$1, ");
+}
+
+// AI rows sometimes come back without a description ("תנועה ידנית"). Take it from the local parse
+// of the same amount, so nothing the user said is lost.
+export function mergeAiWithLocal(aiRows, localRows) {
+    const empty = m => !m || m === "תנועה ידנית";
+    const weak = c => !c || c === "אחר" || c === "לא מסווג";
+    const used = new Set();
+    return aiRows.map(a => {
+        if (!empty(a.merchant) && !weak(a.category))
+            return a;
+        const i = localRows.findIndex((l, idx) => !used.has(idx) && Math.abs(Number(l.amount) - Number(a.amount)) < 0.005);
+        if (i < 0)
+            return a;
+        used.add(i);
+        const l = localRows[i];
+        return { ...a, merchant: empty(a.merchant) && !empty(l.merchant) ? l.merchant : a.merchant, category: weak(a.category) && !weak(l.category) ? l.category : a.category };
+    });
+}
+
 export function parseQuickEntries(text, cats, rules, history = []) {
+    text = separateAfterExplicitCategory(text, cats);
     const isCategoryWord = p => cats.find(c => c !== "לא מסווג" && normalizeMerchant(c) === normalizeMerchant(p)) || null;
     return groupQuickPieces(splitQuickSpeech(text)).map((pieces, i) => {
         const part = pieces.join(", ");

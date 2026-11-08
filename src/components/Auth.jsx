@@ -50,7 +50,7 @@ export function Auth() {
       <div className="authbox">
         <h1>🏠 הוצאות הבית</h1>
         <p>ניהול משותף של ההוצאות שלכם</p>
-        <small className="version-badge">v24.48</small>
+        <small className="version-badge">v24.49</small>
         <input dir="ltr" placeholder="אימייל" value={email} onChange={e => setEmail(e.target.value)}/>
         <input dir="ltr" type="password" placeholder="סיסמה" value={password} onChange={e => setPassword(e.target.value)}/>
         <button disabled={busy} onClick={submit}>{busy ? "רגע…" : signup ? "הרשמה" : "כניסה"}</button>
