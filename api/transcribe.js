@@ -1,3 +1,5 @@
+import { requireUser } from "./_auth.js";
+
 export const config = { api: { bodyParser: { sizeLimit: "4mb" } } };
 
 function extensionFor(mime="") {
@@ -11,6 +13,8 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const key = process.env.GROQ_API_KEY;
   if (!key) return res.status(503).json({ error: "GROQ_API_KEY לא מוגדר ב-Vercel" });
+  const user = await requireUser(req, res);
+  if (!user) return;
   try {
     const { audio, mimeType = "audio/webm", vocabulary = [] } = req.body || {};
     if (!audio || typeof audio !== "string") return res.status(400).json({ error: "לא התקבלה הקלטה" });
@@ -25,8 +29,15 @@ export default async function handler(req, res) {
     form.append("language", "he");
     form.append("temperature", "0");
     form.append("response_format", "json");
-    const vocab = Array.isArray(vocabulary) ? vocabulary.map(x=>String(x||"").trim()).filter(Boolean).slice(0,180) : [];
-    form.append("prompt", `תמלול מילולי ומדויק בעברית של רשימת הוצאות והכנסות. חשוב במיוחד: העתק כל מספר וסכום ספרה-בספרה בדיוק כפי שנאמר; אל תוסיף אפס ואל תסיר אפס. שמור שמות מוצרים, עסקים ומילות קטגוריה בדיוק ככל האפשר. אם נאמרה מילה שנמצאת באוצר המילים, העדף את הכתיב הזה. אל תשכתב סכומים ואל תסכם את המשפט. אוצר מילים אישי: ${vocab.join(", ")}`);
+    // Groq Whisper limits prompt to 896 characters, irrespective of audio length.
+    const vocab = Array.isArray(vocabulary) ? [...new Set(vocabulary.map(x=>String(x||"").trim()).filter(Boolean))] : [];
+    const intro = "תמלל בעברית בדיוק, במיוחד סכומים ושמות בתי עסק. אל תמציא מספרים. מילון: ";
+    let hint = "";
+    for (const term of vocab) {
+      if ((intro + hint + (hint ? ", " : "") + term).length > 650) break;
+      hint += (hint ? ", " : "") + term;
+    }
+    form.append("prompt", intro + hint);
 
     const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",

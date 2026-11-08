@@ -1,1 +1,12 @@
-v24.42 test candidate. Node syntax check passed for api/parse-quick.js and src/importers.js. Full Vite build NOT run: npm install timed out. Database migration and actual Groq request NOT tested. Verify in Vercel before using as production.
+v24.46 — test status
+
+PASSED (run here):
+- npm test: 64 tests, 64 passed, 0 failed (also under TZ=UTC, America/Los_Angeles, Pacific/Kiritimati)
+- Syntax check (node --check) of all files in api/, src/lib/, src/services/, src/importers.js
+- Static check: no undefined names / missing imports across src/
+- App bundled with esbuild (the engine Vite uses) and run in Chromium with mock Supabase data:
+  no runtime errors; all tabs, grocery weekly/monthly + bar click, data check, mark/unmark duplicate, why-panel, quick entry, Excel export clicked
+
+NOT RUN (and why):
+- npm install / npm ci / npm run build: no internet access in this environment (and no lock file in the project)
+- Real Supabase (RLS, migration) and real Groq requests: no access to your accounts

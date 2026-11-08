@@ -1,3 +1,5 @@
+import { requireUser } from "./_auth.js";
+
 export const config = { api: { bodyParser: { sizeLimit: "256kb" } } };
 
 function cleanJsonText(text="") {
@@ -6,27 +8,12 @@ function cleanJsonText(text="") {
   return (fenced ? fenced[1] : s).trim();
 }
 
-async function chooseModel(key) {
-  const preferred = [
-    "openai/gpt-oss-20b",
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "openai/gpt-oss-120b",
-  ];
-  try {
-    const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { Authorization: `Bearer ${key}` } });
-    const d = await r.json().catch(()=>({}));
-    const ids = new Set((d?.data || []).map(x => x?.id).filter(Boolean));
-    return preferred.find(id => ids.has(id)) || "llama-3.1-8b-instant";
-  } catch {
-    return "llama-3.1-8b-instant";
-  }
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const key = process.env.GROQ_API_KEY;
   if (!key) return res.status(503).json({ error: "GROQ_API_KEY לא מוגדר ב-Vercel" });
+  const user = await requireUser(req, res);
+  if (!user) return;
   try {
     const transcript = String(req.body?.transcript || "").trim();
     const categories = Array.isArray(req.body?.categories) ? req.body.categories.map(String).filter(Boolean).slice(0, 120) : [];
