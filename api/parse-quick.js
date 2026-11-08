@@ -1,4 +1,5 @@
 import { requireUser } from "./_auth.js";
+import { availableModels, isFormatError, isModelError, orderModels } from "./_groqModels.js";
 
 export const config = { api: { bodyParser: { sizeLimit: "256kb" } } };
 
@@ -20,28 +21,37 @@ export default async function handler(req, res) {
     const historyMerchants = Array.isArray(req.body?.historyMerchants) ? req.body.historyMerchants.map(String).filter(Boolean).slice(0, 120) : [];
     if (!transcript) return res.status(400).json({ error: "לא התקבל תמלול לפענוח" });
 
-    // Keep prompts compact: some provider models reject long prompts.
-    const system = 'החזר JSON בלבד במבנה {"entries":[{"type":"expense","merchant":"","amount":0,"category":"","payment_method":"מזומן","date_hint":null}]}. פענח כל הוצאה בנפרד. סכומים חייבים להיות מדויקים. type יכול להיות expense או income. date_hint יכול להיות today,yesterday,day_before_yesterday או null. בחר קטגוריה מהרשימה או לא מסווג. אל תמציא עסקאות.';
-    const categoryList = categories.slice(0,30).join(', ').slice(0,220);
-    const merchantList = historyMerchants.slice(0,12).join(', ').slice(0,140);
+    const system = 'החזר JSON בלבד במבנה {"entries":[{"type":"expense","merchant":"","amount":0,"category":"","payment_method":"מזומן","date_hint":null}]}. פענח כל הוצאה בנפרד. סכומים חייבים להיות מדויקים. type יכול להיות expense או income. date_hint יכול להיות today,yesterday,day_before_yesterday או null. בחר קטגוריה מהרשימה או לא מסווג. אל תמציא עסקאות. הסכום יכול להיאמר לפני או אחרי הפריט ("150 שקל, טיטולים, תינוק"). מילה ששווה לשם קטגוריה מהרשימה היא הקטגוריה ולא חלק מהתיאור.';
+    // All categories must reach the model, otherwise it cannot choose e.g. "תינוק" (the old 220-character cut dropped them).
+    const categoryList = categories.slice(0,80).join(', ').slice(0,1500);
+    const merchantList = historyMerchants.slice(0,40).join(', ').slice(0,600);
     const user = `קטגוריות: ${categoryList}\nעסקים מוכרים: ${merchantList}\nתמלול: ${transcript.slice(0,3500)}`;
-    // Use a model with a normal chat context window, not an unexpectedly constrained model.
-    const model = 'llama-3.3-70b-versatile';
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [{ role: "system", content: system }, { role: "user", content: user }]
-      })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      console.error("Groq parser error", response.status, model, data);
-      return res.status(response.status).json({ error: data?.error?.message || "שירות הפענוח החזיר שגיאה" });
+    // Model is chosen from what this API key can use (api/_groqModels.js); a retired model no longer breaks parsing.
+    const models = orderModels(await availableModels(key), process.env.GROQ_PARSE_MODEL).slice(0, 4);
+    let data = {}, model = "", lastStatus = 502, lastError = "שירות הפענוח החזיר שגיאה";
+    for (const m of models) {
+      for (const jsonMode of [true, false]) {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: m,
+            temperature: 0,
+            ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+            messages: [{ role: "system", content: system }, { role: "user", content: user }]
+          })
+        });
+        const d = await response.json().catch(() => ({}));
+        if (response.ok) { data = d; model = m; break; }
+        lastStatus = response.status; lastError = d?.error?.message || lastError;
+        console.error("Groq parser error", response.status, m, lastError);
+        if (jsonMode && isFormatError(lastError)) continue;   // same model, without JSON mode
+        break;                                                // next model (or stop below)
+      }
+      if (model) break;
+      if (!isModelError(lastStatus, lastError) && !isFormatError(lastError)) break; // e.g. bad key / rate limit: do not hammer
     }
+    if (!model) return res.status(lastStatus >= 400 ? lastStatus : 502).json({ error: lastError });
     const raw = data?.choices?.[0]?.message?.content || "";
     let parsed;
     try { parsed = JSON.parse(cleanJsonText(raw)); }

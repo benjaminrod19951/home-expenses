@@ -75,8 +75,9 @@ export function hebrewNumber(text) {
     return used ? total + current : null;
 }
 
+// Digits: "1,200" or "1200" (the old pattern read "9000" as 900 — it took up to 3 digits without a comma).
 export function amountFromSpeech(text) {
-    const digit = String(text || "").match(/(?:₪\s*)?(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?)\s*(?:₪|ש(?:קל|קלים)|שח)?/i);
+    const digit = String(text || "").match(/(?:₪\s*)?(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s*(?:₪|ש(?:קל|קלים)|שח)?/i);
     if (digit)
         return Math.abs(Number(digit[1].replace(/,/g, "")));
     const before = String(text || "").match(/((?:[א-ת]+\s+){0,5}[א-ת]+)\s+(?:שקל|שקלים|שח|₪)/i);
@@ -106,10 +107,12 @@ export function stripExplicitCategory(text, cats) {
     return t;
 }
 
+// NOTE: JavaScript's \b only knows English letters, so it never matched next to Hebrew words
+// (e.g. "שילמתי", "במזומן" stayed in the description). Hebrew-aware boundaries are used instead.
 export function cleanQuickText(text, cats = []) {
     let t = stripExplicitCategory(text, cats);
-    t = t.replace(/\b(?:היום|אתמול|שלשום|מחר)\b/g, " ").replace(/\b(?:במזומן|מזומן|באשראי|אשראי|בביט|ביט|בהעברה|העברה)\b/g, " ").replace(/(?:₪\s*)?\d[\d,.]*\s*(?:₪|שקל(?:ים)?|שח)?/gi, " ").replace(/\b(?:אפס|אחד|אחת|שניים|שתיים|שני|שתי|שלושה|שלוש|ארבעה|ארבע|חמישה|חמש|שישה|שש|שבעה|שבע|שמונה|תשעה|תשע|עשרה|עשר|עשרים|שלושים|ארבעים|חמישים|שישים|שבעים|שמונים|תשעים|מאה|מאתיים|מאות|אלף|אלפיים)\b/g, " ").replace(/\b(?:שקל|שקלים|שח)\b/g, " ");
-    t = t.replace(/\b(?:שילמתי|שילמנו|הוצאתי|הוצאה|הוצאות|קניתי|קנייה|הייתי|היה|עבור|קיבלתי|קיבלנו|הכנסה|הכנסות|נכנס|נכנסה|התקבל|התקבלה|זיכוי|לי|לה|לו|אז|נגיד)\b/g, " ").replace(/^\s*(?:על|ב|מ)\s+/g, " ").replace(/\s+/g, " ").trim().replace(/^[,.-]+|[,.-]+$/g, "");
+    t = t.replace(/(?<![\p{L}\p{N}])(?:היום|אתמול|שלשום|מחר)(?![\p{L}\p{N}])/gu, " ").replace(/(?<![\p{L}\p{N}])(?:במזומן|מזומן|באשראי|אשראי|בביט|ביט|בהעברה|העברה)(?![\p{L}\p{N}])/gu, " ").replace(/(?:₪\s*)?\d[\d,.]*\s*(?:₪|שקל(?:ים)?|שח)?/gi, " ").replace(/(?<![\p{L}\p{N}])(?:ו|ב|וב|ל|ול)?(?:אפס|אחד|אחת|שניים|שתיים|שני|שתי|שלושה|שלוש|ארבעה|ארבע|חמישה|חמש|שישה|שש|שבעה|שבע|שמונה|תשעה|תשע|עשרה|עשר|עשרים|שלושים|ארבעים|חמישים|שישים|שבעים|שמונים|תשעים|מאה|מאתיים|מאות|אלף|אלפיים)(?![\p{L}\p{N}])/gu, " ").replace(/(?<![\p{L}\p{N}])(?:שקל|שקלים|שח)(?![\p{L}\p{N}])/gu, " ");
+    t = t.replace(/(?<![\p{L}\p{N}])(?:שילמתי|שילמנו|הוצאתי|הוצאה|הוצאות|קניתי|קנייה|הייתי|היה|עבור|קיבלתי|קיבלנו|הכנסה|הכנסות|נכנס|נכנסה|התקבל|התקבלה|זיכוי|לי|לה|לו|אז|נגיד)(?![\p{L}\p{N}])/gu, " ").replace(/^\s*(?:על|ב|מ)\s+/g, " ").replace(/\s+/g, " ").trim().replace(/^[,.-]+|[,.-]+$/g, "");
     return t;
 }
 
@@ -145,7 +148,7 @@ export function quickCategory(text, cats, rules, history = []) {
         return direct;
     const rule = [...rules].sort((a, b) => String(b.merchant_key || "").length - String(a.merchant_key || "").length).find(r => {
         const k = normalizeMerchant(r.merchant_key || r.merchant_label);
-        return k && (n.includes(k) || k.includes(n));
+        return k && n.length >= 2 && (n.includes(k) || k.includes(n)); // empty text must not match every rule
     });
     if (rule?.category)
         return rule.category;
@@ -192,9 +195,45 @@ export function quickMerchant(text, cats = []) {
     return cleanQuickText(text, cats) || "תנועה ידנית";
 }
 
+// Words that describe the same entry when they follow an amount ("120 שקל קטגוריה סופר", "120 שקל במזומן").
+const SAME_ENTRY_AFTER_AMOUNT = "(?:קטגוריה|קטגוריית|במזומן|מזומן|באשראי|אשראי|בביט|ביט|בהעברה|העברה|היום|אתמול|שלשום)";
+const CURRENCY_FOLLOWED_BY_TEXT = new RegExp(`(שקל(?:ים)?|שח|₪)\\s+(?=[^,;.\\s])(?!${SAME_ENTRY_AFTER_AMOUNT}(?![\\p{L}\\p{N}]))`, "gu");
+
 export function splitQuickSpeech(text) {
-    const marked = String(text || "").replace(/\n+/g, ". ").replace(/(שקל(?:ים)?|שח|₪)\s+(?=[^,;.])/g, "$1||| ");
-    return marked.split(/\s*(?:\|\|\||,|;|\.| ואז | ואחר כך | בנוסף | וגם )\s*/).map(x => x.trim()).filter(Boolean);
+    const marked = String(text || "").replace(/\n+/g, ". ").replace(CURRENCY_FOLLOWED_BY_TEXT, "$1||| ");
+    // "," and "." inside a number ("1,200", "12.50") are not separators
+    return marked.split(/\s*(?:\|\|\||(?<!\d),|,(?!\d)|;|(?<!\d)\.|\.(?!\d)| ואז | ואחר כך | בנוסף | וגם )\s*/).map(x => x.trim()).filter(Boolean);
+}
+
+// Pieces without an amount ("טיטולים", "תינוק") belong to a neighbouring amount:
+//  * speech starts with an amount ("150 שקל, טיטולים, תינוק, 250 שקל, ...") -> they belong to the amount BEFORE them;
+//  * speech starts with text ("טיטולים, תינוק, 150 שקל, ...") -> they belong to the amount AFTER them.
+export function groupQuickPieces(pieces) {
+    const hasAmount = p => amountFromSpeech(p) != null;
+    const groups = [];
+    if (!pieces.length)
+        return groups;
+    if (hasAmount(pieces[0])) {
+        for (const p of pieces) {
+            if (hasAmount(p) || !groups.length)
+                groups.push([p]);
+            else
+                groups[groups.length - 1].push(p);
+        }
+    }
+    else {
+        let pending = [];
+        for (const p of pieces) {
+            pending.push(p);
+            if (hasAmount(p)) {
+                groups.push(pending);
+                pending = [];
+            }
+        }
+        if (pending.length && groups.length)
+            groups[groups.length - 1].push(...pending); // trailing words after the last amount
+    }
+    return groups.filter(g => g.some(hasAmount));
 }
 
 export function quickEntryType(part) {
@@ -202,15 +241,19 @@ export function quickEntryType(part) {
 }
 
 export function parseQuickEntries(text, cats, rules, history = []) {
-    return splitQuickSpeech(text).map((part, i) => {
+    const isCategoryWord = p => cats.find(c => c !== "לא מסווג" && normalizeMerchant(c) === normalizeMerchant(p)) || null;
+    return groupQuickPieces(splitQuickSpeech(text)).map((pieces, i) => {
+        const part = pieces.join(", ");
         const amount = amountFromSpeech(part);
         if (!amount)
             return null;
         const type = quickEntryType(part);
         const payment = /מזומן/.test(part) ? "מזומן" : /ביט/.test(part) ? "ביט" : /אשראי/.test(part) ? "אשראי" : /העברה/.test(part) ? "העברה" : type === "income" ? "העברה" : "מזומן";
         const date = /שלשום/.test(part) ? dateOffset(-2) : /אתמול/.test(part) ? dateOffset(-1) : today();
-        const merchant = quickMerchant(part, cats);
-        const category = quickCategory(part, cats, rules, history);
+        const categoryPiece = pieces.map(isCategoryWord).find(Boolean);
+        const textPieces = pieces.filter(p => !isCategoryWord(p) || pieces.length === 1);
+        const merchant = quickMerchant(textPieces.join(" "), cats);
+        const category = categoryPiece || quickCategory(part, cats, rules, history);
         return {
             _key: `q-${Date.now()}-${i}`, type, date, amount, category, merchant, payment_method: payment, notes: `הזנה מהירה: ${part}`
         };
