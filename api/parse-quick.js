@@ -33,10 +33,13 @@ export default async function handler(req, res) {
     const historyMerchants = Array.isArray(req.body?.historyMerchants) ? req.body.historyMerchants.map(String).filter(Boolean).slice(0, 120) : [];
     if (!transcript) return res.status(400).json({ error: "לא התקבל תמלול לפענוח" });
 
-    const system = `אתה ממיר תמלול דיבור בעברית לרשימת תנועות כספיות. החזר JSON בלבד: {"entries":[...]}.\nכל entry: type=expense|income, merchant, amount מספר חיובי, category, payment_method, date_hint.\n\nכללים קריטיים:\n- העתק סכומים בדיוק מהתמלול. 380 חייב להישאר 380; 3880 חייב להישאר 3880. אל תוסיף או תסיר ספרות ואפסים.\n- אם סכום נאמר במילים, המר אותו למספר רק אם הוא חד-משמעי.\n- merchant הוא התיאור שנאמר ליד הסכום; אל תחליף אותו ב\"תנועה ידנית\" אם יש תיאור אמיתי.\n- קטע אחרי הסכום יכול להיות קטגוריה. אם נאמר \"קטגוריה X\" השתמש ב-X אם הוא נמצא ברשימה.\n- category חייבת להיות אחת מהקטגוריות שסופקו; אם אין התאמה בטוחה החזר \"לא מסווג\". אל תמציא קטגוריה.\n- הכנסה: מילים כמו הכנסה, קיבלתי, נכנס, זיכוי. אחרת ברירת מחדל expense.\n- payment_method: מזומן, ביט, אשראי, העברה, עו\"ש. אם לא נאמר: expense=מזומן, income=העברה.\n- date_hint: today, yesterday, day_before_yesterday או null.\n- אל תאחד תנועות. אל תיצור שורה בלי סכום. שמור סדר. חובה להחזיר שורה לכל הוצאה מזוהה, גם כשיש 3, 5 או 10 תנועות.
-- תקן שגיאות כתיב ברורות בשמות עסקים או מוצרים לפי ההקשר והיסטוריית העסקים שסופקה. למשל בלאדות => ולדות כשזה ההקשר. אל תשנה מספרים או סכומים, ואל תנחש אם המשמעות אינה ודאית.\n- מילים כמו היום/אתמול/שלשום אינן חלק מה-merchant.\n- אם הטקסט אומר למשל \"שתי מנורות 380 שקל קטגוריה עיצוב הבית\", החזר merchant=\"שתי מנורות\", amount=380, category=\"עיצוב הבית\" אם היא קיימת.`;
-    const user = `שמות עסקים קודמים (לסיוע בתיקון שגיאות תמלול בלבד):\n${historyMerchants.join(", ")}\n\nקטגוריות קיימות:\n${categories.map(c=>`- ${c}`).join("\n")}\n\nתמלול מלא:\n${transcript}`;
-    const model = await chooseModel(key);
+    // Keep prompts compact: some provider models reject long prompts.
+    const system = 'החזר JSON בלבד במבנה {"entries":[{"type":"expense","merchant":"","amount":0,"category":"","payment_method":"מזומן","date_hint":null}]}. פענח כל הוצאה בנפרד. סכומים חייבים להיות מדויקים. type יכול להיות expense או income. date_hint יכול להיות today,yesterday,day_before_yesterday או null. בחר קטגוריה מהרשימה או לא מסווג. אל תמציא עסקאות.';
+    const categoryList = categories.slice(0,30).join(', ').slice(0,220);
+    const merchantList = historyMerchants.slice(0,12).join(', ').slice(0,140);
+    const user = `קטגוריות: ${categoryList}\nעסקים מוכרים: ${merchantList}\nתמלול: ${transcript.slice(0,3500)}`;
+    // Use a model with a normal chat context window, not an unexpectedly constrained model.
+    const model = 'llama-3.3-70b-versatile';
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

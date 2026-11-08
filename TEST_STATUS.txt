@@ -1,0 +1,1 @@
+v24.42 test candidate. Node syntax check passed for api/parse-quick.js and src/importers.js. Full Vite build NOT run: npm install timed out. Database migration and actual Groq request NOT tested. Verify in Vercel before using as production.
